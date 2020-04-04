@@ -24,12 +24,14 @@ var (
 	bestblock   int64                    // tip has a max height (may not be the only one)
 	miners      []miner_t                // one per miner (unordered)
 	eventlist   = make(eventlist_t, 0)   // priority queue, lowest timestamp first
+	difficulty  float64                  // increase average block time
+	iterations  int64
 )
 
 type block_t struct {
-	parent  int64 // first block is the only block with parent = zero
-	height  int   // more than one block can have the same height
-	miner *miner_t   // which miner found this block
+	parent int64 // first block is the only block with parent = zero
+	height int   // more than one block can have the same height
+	miner  int   // which miner found this block
 }
 
 func getblock(blockid int64) *block_t {
@@ -42,11 +44,13 @@ func getheight(blockid int64) int {
 // The set of miners is static (at least for now)
 type (
 	peer_t struct {
-		miner *miner_t
-		delay   float64
+		miner int
+		delay float64
 	}
 	miner_t struct {
-		hashrate int      // how much hashing power this miner has
+		name     string
+		index    int
+		hashrate float64  // how much hashing power this miner has
 		mined    int      // how many blocks we've mined total (including reorg)
 		credit   int      // how many blocks we've mined we get credit for
 		peer     []peer_t // outbound peers (we forward blocks to these miners)
@@ -59,7 +63,7 @@ type (
 type (
 	event_t struct {
 		when    float64 // when the block arrives
-		to      *miner_t     // which miner gets the block
+		to      int     // which miner gets the block
 		blockid int64   // >0: block arriving on p2p, <0: block we're mining on
 	}
 	eventlist_t []event_t
@@ -79,7 +83,8 @@ func (e *eventlist_t) Pop() interface{} {
 	return x
 }
 
-func (m *miner_t) stopMining() {
+func stopMining(mi int) {
+	m := &miners[mi]
 	tips[m.current]--
 	if tips[m.current] == 0 {
 		delete(tips, m.current)
@@ -87,14 +92,16 @@ func (m *miner_t) stopMining() {
 }
 
 // Start mining on top of the given existing block
-func (m *miner_t) startMining(blockid int64) {
+func startMining(mi int, blockid int64) {
+	m := &miners[mi]
 	// We'll mine on top of blockid
 	m.current = blockid
 	tips[m.current]++
 
 	// Relay our most recent block to our peers.
 	for _, p := range m.peer {
-		// add some jitter to this delay?
+		// add some jitter to this delay, or sometimes
+		// fail to forward?
 		heap.Push(&eventlist, event_t{
 			when:    currenttime + p.delay,
 			to:      p.miner,
@@ -104,20 +111,21 @@ func (m *miner_t) startMining(blockid int64) {
 	// Schedule an event for when our "mining" will be done
 	// (the larger the hashrate, the smaller the delay).
 	delay := -math.Log(1.0 - r.Float64())
-	delay *= float64(1e6) / float64(m.hashrate)
+	delay *= float64(1e6) / m.hashrate * difficulty
 	// negative blockid means mining (not p2p)
 	heap.Push(&eventlist, event_t{
 		when:    currenttime + delay,
-		to:      m,
+		to:      mi,
 		blockid: -blockid})
 }
 
 func main() {
-	if len(os.Args) != 3 {
-		fmt.Println("usage:", os.Args[0], "iterations network-file")
+	var err error
+	if len(os.Args) < 3 {
+		fmt.Println("usage:", os.Args[0], "iterations network-file [difficulty]")
 		os.Exit(1)
 	}
-	iterations, err := strconv.ParseInt(os.Args[1], 10, 32)
+	iterations, err = strconv.ParseInt(os.Args[1], 10, 64)
 	if err != nil {
 		fmt.Println("bad iterations:", err)
 		os.Exit(1)
@@ -127,6 +135,18 @@ func main() {
 		fmt.Println("open failed:", err)
 		os.Exit(1)
 	}
+	difficulty = 1.0
+	if len(os.Args) == 4 {
+		difficulty, err = strconv.ParseFloat(os.Args[3], 64)
+		if err != nil {
+			fmt.Println("bad difficulty:", err)
+			os.Exit(1)
+		}
+		if difficulty <= 0 {
+			fmt.Println("difficulty must be greater than zero:", difficulty)
+			os.Exit(1)
+		}
+	}
 	minerMap := make(map[string][]string, 0)
 	minerIndex := make(map[string]int, 0)
 	i := 0
@@ -134,14 +154,13 @@ func main() {
 	for scan.Scan() { // each line
 		// Each line is a hashrate, then a list of pairs of
 		// client id and delay (time to send to that client)
-		line := scan.Text()
-		if len(line) == 0 {
+		fields := strings.Fields(scan.Text())
+		if len(fields) == 0 {
 			continue
 		}
-		if line[0:1] == "#" {
+		if fields[0] == "#" {
 			continue
 		}
-		fields := strings.Fields(line)
 		if _, ok := minerMap[fields[0]]; ok {
 			fmt.Println("duplicate miner name:", fields[0])
 			os.Exit(1)
@@ -153,35 +172,43 @@ func main() {
 	miners = make([]miner_t, i)
 	for k, v := range minerMap {
 		// v is a slice of whitespace-separated tokens (on a line)
-		hr, err := strconv.ParseInt(v[0], 10, 32)
+		hr, err := strconv.ParseFloat(v[0], 64)
 		if err != nil {
 			fmt.Println("bad hashrate:", v[0], err)
 			os.Exit(1)
 		}
-		m := miner_t{hashrate: int(hr)}
+		if hr <= 0 {
+			fmt.Println("hashrate must be greater than zero:", v[0])
+			os.Exit(1)
+		}
+		m := miner_t{hashrate: hr}
+		m.name = k
+		m.index = minerIndex[k]
 		v = v[1:]
 		if (len(v) % 2) > 0 {
 			fmt.Println("bad client delay pairs:", k, v)
 			os.Exit(1)
 		}
 		for len(v) > 0 {
-			minerid := minerIndex[v[0]]
+			if _, ok := minerIndex[v[0]]; !ok {
+				fmt.Println("no such miner:", v[0])
+				os.Exit(1)
+			}
 			delay, err := strconv.ParseFloat(v[1], 64)
 			if err != nil {
 				fmt.Println("bad delay:", v[1], err)
 				os.Exit(1)
 			}
-			m.peer = append(m.peer, peer_t{&miners[minerid], delay})
+			m.peer = append(m.peer, peer_t{minerIndex[v[0]], delay})
 			v = v[2:]
 		}
-		miners[minerIndex[k]] = m
+		miners[m.index] = m
 	}
 
 	// Start all miners off mining their first blocks.
-	heap.Init(&eventlist)
-	for _, m := range miners {
+	for mi := range miners {
 		// begin mining on block "zero"
-		m.startMining(0)
+		startMining(mi, 0)
 	}
 
 	// should this be based instead on time?
@@ -198,14 +225,15 @@ func main() {
 		}
 		event := heap.Pop(&eventlist).(event_t)
 		currenttime = event.when
-		m := event.to
+		mi := event.to
+		m := &miners[mi]
 		if event.blockid > 0 {
 			// this block is from a peer, see if it's useful
 			if event.blockid >= baseblockid &&
 				getheight(m.current) < getheight(event.blockid) {
 				// incoming block is better, switch to it
-				m.stopMining()
-				m.startMining(event.blockid)
+				stopMining(mi)
+				startMining(mi, event.blockid)
 			}
 			continue
 		}
@@ -218,51 +246,53 @@ func main() {
 		}
 		m.mined++
 		blocks = append(blocks, block_t{
-			parent:  m.current,
-			height:  getheight(m.current) + 1,
-			miner: m})
+			parent: m.current,
+			height: getheight(m.current) + 1,
+			miner:  mi})
 		prev := m.current
-		m.startMining(baseblockid + int64(len(blocks)) - 1)
-		if bestblock == 0 || prev == bestblock {
-			// we're extending what's already the best chain, easy
+		stopMining(mi)
+		startMining(mi, baseblockid+int64(len(blocks))-1)
+		if prev == bestblock {
+			// we're extending what's already the best chain
 			bestblock = m.current
 			m.credit++
 			continue
 		}
 		if getheight(m.current) <= getheight(bestblock) {
+			// we're mining on a non-best branch
 			continue
 		}
 		// The current chain now has one more block than what was
-		// the best chain, reorg, credits must be adjusted.
+		// the best chain (reorg), adjust credits.
 		m.credit++
 		dec := bestblock // decrement credits on this branch
 		inc := prev      // increment credits on this branch
 		for dec != inc {
 			db := getblock(dec)
 			ib := getblock(inc)
-			db.miner.credit--
-			ib.miner.credit++
+			miners[db.miner].credit--
+			miners[ib.miner].credit++
 			dec = db.parent
 			inc = ib.parent
 		}
 		bestblock = m.current
 	}
-	totalblocks := 0
-	totalorphans := 0
-	totalhash := 0
+	var totalblocks int
+	var totalorphans int
+	var totalhash float64
 	for _, m := range miners {
 		totalblocks += m.credit
 		totalorphans += m.mined - m.credit
 		totalhash += m.hashrate
 	}
 	fmt.Printf("total-blocks %d\n", totalblocks)
-	fmt.Printf("total-simtime %d\n", int64(currenttime))
+	fmt.Printf("total-simtime %.2f\n", currenttime)
 	fmt.Printf("ave-block-time %.2f\n", float64(currenttime)/float64(totalblocks))
-	fmt.Printf("total-hash-rate %d\n", totalhash)
-	fmt.Printf("effective-hash-rate %.2f\n", 1e6/(float64(currenttime)/float64(totalblocks)))
-	for k := range minerMap {
-		m := &miners[minerIndex[k]]
-		fmt.Printf("miner %s hashrate %d %.2f%% ", k, m.hashrate, float64(m.hashrate*100)/float64(totalhash))
+	fmt.Printf("total-hash-rate %f\n", totalhash)
+	fmt.Printf("effective-hash-rate %.2f\n", difficulty*1e6/currenttime*float64(totalblocks))
+	fmt.Printf("total-orphans %d\n", totalorphans)
+	for _, m := range miners {
+		fmt.Printf("miner %s hashrate %.2f %.2f%% ", m.name, m.hashrate, m.hashrate*100/totalhash)
 		fmt.Printf("blocks %.2f%% ", float64(m.credit*100)/float64(totalblocks))
 		fmt.Printf("orphans %.2f%%", float64((m.mined-m.credit)*100)/float64(totalorphans))
 		fmt.Println("")
