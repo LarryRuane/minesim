@@ -1,7 +1,7 @@
 # two groups of miners far apart (the times must include block verification)
-china-asic     500    china-gateway 20
-china-gpu       80    china-gateway 20
-china-gateway   20    china-asic 30         china-gpu 20  iceland-gw 400
+china-asic     500    china-gateway 0.5
+china-gpu       80    china-gateway 0.5
+china-gateway   20    china-asic 0.5      china-gpu 0.5  iceland-gw 2
 
-iceland-gw     800    china-gateway 600     iceland2 5 
-iceland2      1050    iceland-gw 400
+iceland-gw     800    china-gateway 2     iceland2 0.5
+iceland2      2050    iceland-gw 0.5

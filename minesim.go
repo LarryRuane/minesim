@@ -1,12 +1,12 @@
-// This program simulates a network of block miners in a proof of work system. You specify
-// a network topology, and a hash rate for each miner. The time units are whatever you'd
-// like them to be. Here's an example input file:
-
+// This program simulates a network of block miners in a proof of work system.
+// You specify a network topology, and a hash rate for each miner.
+// The time units are arbitrary, but seconds works well.
 package main
 
 import (
 	"bufio"
 	"container/heap"
+	"flag"
 	"fmt"
 	"math"
 	"math/rand"
@@ -15,18 +15,42 @@ import (
 	"strings"
 )
 
-var (
+var g struct {
 	currenttime float64
-	r           = rand.New(rand.NewSource(99))
-	blocks      = make([]block_t, 1)     // ordered by oldest first
-	baseblockid int64                    // blocks[0] corresponds to this block id
-	tips        = make(map[int64]int, 0) // for pruning
-	bestblock   int64                    // tip has a max height (may not be the only one)
-	miners      []miner_t                // one per miner (unordered)
-	eventlist   = make(eventlist_t, 0)   // priority queue, lowest timestamp first
-	difficulty  float64                  // increase average block time
-	iterations  int64
-)
+	r           *rand.Rand
+	blocks      []block_t     // ordered by oldest first
+	baseblockid int64         // blocks[0] corresponds to this block id
+	tips        map[int64]int // for pruning
+	bestblockid int64         // tip has a max height (may not be unique)
+	miners      []miner_t     // one per miner (unordered)
+	eventlist   eventlist_t   // priority queue, lowest timestamp first
+	difficulty  float64       // increase average block time
+	iterations  int
+	trace       bool
+}
+
+func init() {
+	// Our genesis block has height 1.
+	g.blocks = append(g.blocks, block_t{
+		parent: 0,
+		height: 0,
+		miner:  -1})
+	g.baseblockid = 1
+	g.tips = make(map[int64]int, 0)
+	g.bestblockid = 1
+	g.eventlist = make([]event_t, 0)
+
+	flag.BoolVar(&g.trace, "t", false, "print execution trace to stdout")
+	flag.IntVar(&g.iterations, "i", 20, "number of simulation steps")
+	flag.Float64Var(&g.difficulty, "d", 1, "difficulty")
+}
+
+func trace(format string, a ...interface{}) (n int, err error) {
+	if g.trace {
+		return fmt.Printf(format, a...)
+	}
+	return 0, nil
+}
 
 type block_t struct {
 	parent int64 // first block is the only block with parent = zero
@@ -35,13 +59,13 @@ type block_t struct {
 }
 
 func getblock(blockid int64) *block_t {
-	return &blocks[blockid-baseblockid]
+	return &g.blocks[blockid-g.baseblockid]
 }
 func getheight(blockid int64) int {
-	return blocks[blockid-baseblockid].height
+	return g.blocks[blockid-g.baseblockid].height
 }
 
-// The set of miners is static (at least for now)
+// The set of miners is static (at least for now).
 type (
 	peer_t struct {
 		miner int
@@ -49,22 +73,22 @@ type (
 	}
 	miner_t struct {
 		name     string
-		index    int
+		index    int      // in miner[]
 		hashrate float64  // how much hashing power this miner has
 		mined    int      // how many blocks we've mined total (including reorg)
 		credit   int      // how many blocks we've mined we get credit for
 		peer     []peer_t // outbound peers (we forward blocks to these miners)
-		current  int64    // the block we're trying to mine on top of (initially 0)
+		current  int64    // the blockid we're trying to mine onto, initially 1
 	}
 )
 
-// The only event is the arrival of a block at a miner; if the block id is zero,
-// that means this miner mined this block.
+// The only event is the arrival of a block at a miner; if the block id is
+// negative, that means this miner mined a new block on this blockid.
 type (
 	event_t struct {
-		when    float64 // when the block arrives
+		when    float64 // time of block arrival
 		to      int     // which miner gets the block
-		blockid int64   // >0: block arriving on p2p, <0: block we're mining on
+		blockid int64   // >0: arriving on p2p, <0: block we're mining on
 	}
 	eventlist_t []event_t
 )
@@ -84,68 +108,57 @@ func (e *eventlist_t) Pop() interface{} {
 }
 
 func stopMining(mi int) {
-	m := &miners[mi]
-	tips[m.current]--
-	if tips[m.current] == 0 {
-		delete(tips, m.current)
+	m := &g.miners[mi]
+	g.tips[m.current]--
+	if g.tips[m.current] == 0 {
+		delete(g.tips, m.current)
+	}
+}
+
+// Relay a newly-discovered block (either mined or relayed to us) to our peers.
+func relay(mi int, newblockid int64) {
+	m := &g.miners[mi]
+	for _, p := range m.peer {
+		// jitter this delay, or sometimes fail to forward?
+		heap.Push(&g.eventlist, event_t{
+			when:    g.currenttime + p.delay,
+			to:      p.miner,
+			blockid: newblockid})
 	}
 }
 
 // Start mining on top of the given existing block
 func startMining(mi int, blockid int64) {
-	m := &miners[mi]
+	m := &g.miners[mi]
 	// We'll mine on top of blockid
 	m.current = blockid
-	tips[m.current]++
-
-	// Relay our most recent block to our peers.
-	for _, p := range m.peer {
-		// add some jitter to this delay, or sometimes
-		// fail to forward?
-		heap.Push(&eventlist, event_t{
-			when:    currenttime + p.delay,
-			to:      p.miner,
-			blockid: m.current})
-	}
+	g.tips[m.current]++
 
 	// Schedule an event for when our "mining" will be done
 	// (the larger the hashrate, the smaller the delay).
-	delay := -math.Log(1.0 - r.Float64())
-	delay *= float64(1e6) / m.hashrate * difficulty
+	delay := -math.Log(1.0 - rand.Float64())
+	delay *= float64(1e6) / m.hashrate * g.difficulty
 	// negative blockid means mining (not p2p)
-	heap.Push(&eventlist, event_t{
-		when:    currenttime + delay,
+	heap.Push(&g.eventlist, event_t{
+		when:    g.currenttime + delay,
 		to:      mi,
 		blockid: -blockid})
+	trace("%.2f %s start-on %d height %d nmined %d credit %d delay %.2f\n",
+		g.currenttime, m.name, blockid, getheight(blockid),
+		m.mined, m.credit, delay)
 }
 
 func main() {
+	flag.Parse()
 	var err error
-	if len(os.Args) < 3 {
-		fmt.Println("usage:", os.Args[0], "iterations network-file [difficulty]")
+	if flag.NArg() < 1 {
+		fmt.Println("network-file required")
 		os.Exit(1)
 	}
-	iterations, err = strconv.ParseInt(os.Args[1], 10, 64)
-	if err != nil {
-		fmt.Println("bad iterations:", err)
-		os.Exit(1)
-	}
-	f, err := os.Open(os.Args[2])
+	f, err := os.Open(flag.Arg(0))
 	if err != nil {
 		fmt.Println("open failed:", err)
 		os.Exit(1)
-	}
-	difficulty = 1.0
-	if len(os.Args) == 4 {
-		difficulty, err = strconv.ParseFloat(os.Args[3], 64)
-		if err != nil {
-			fmt.Println("bad difficulty:", err)
-			os.Exit(1)
-		}
-		if difficulty <= 0 {
-			fmt.Println("difficulty must be greater than zero:", difficulty)
-			os.Exit(1)
-		}
 	}
 	minerMap := make(map[string][]string, 0)
 	minerIndex := make(map[string]int, 0)
@@ -169,7 +182,7 @@ func main() {
 		minerIndex[fields[0]] = i
 		i++
 	}
-	miners = make([]miner_t, i)
+	g.miners = make([]miner_t, i)
 	for k, v := range minerMap {
 		// v is a slice of whitespace-separated tokens (on a line)
 		hr, err := strconv.ParseFloat(v[0], 64)
@@ -202,37 +215,41 @@ func main() {
 			m.peer = append(m.peer, peer_t{minerIndex[v[0]], delay})
 			v = v[2:]
 		}
-		miners[m.index] = m
+		g.miners[m.index] = m
 	}
 
 	// Start all miners off mining their first blocks.
-	for mi := range miners {
-		// begin mining on block "zero"
-		startMining(mi, 0)
+	for mi := range g.miners {
+		// begin mining on blockid 1 (our genesis block)
+		startMining(mi, 1)
 	}
 
 	// should this be based instead on time?
-	for i := int64(0); i < iterations; i++ {
+	for i := 0; i < g.iterations; i++ {
 		// clean up unneeded blocks
-		if len(tips) == 1 /*&& len(blocks) > 1*/ {
+		if len(g.tips) == 1 {
 			for {
-				if _, ok := tips[baseblockid]; ok {
+				if _, ok := g.tips[g.baseblockid]; ok {
 					break
 				}
-				baseblockid++
-				blocks = blocks[1:]
+				g.baseblockid++
+				g.blocks = g.blocks[1:]
 			}
 		}
-		event := heap.Pop(&eventlist).(event_t)
-		currenttime = event.when
+		event := heap.Pop(&g.eventlist).(event_t)
+		g.currenttime = event.when
 		mi := event.to
-		m := &miners[mi]
+		m := &g.miners[mi]
 		if event.blockid > 0 {
-			// this block is from a peer, see if it's useful
-			if event.blockid >= baseblockid &&
+			// This block is from a peer, see if it's useful
+			// (the peer has already created event.blockid).
+			if event.blockid >= g.baseblockid &&
 				getheight(m.current) < getheight(event.blockid) {
 				// incoming block is better, switch to it
 				stopMining(mi)
+				trace("%.2f %s received-switch-to %d\n",
+					g.currenttime, g.miners[mi].name, event.blockid)
+				relay(mi, event.blockid)
 				startMining(mi, event.blockid)
 			}
 			continue
@@ -245,56 +262,83 @@ func main() {
 			continue
 		}
 		m.mined++
-		blocks = append(blocks, block_t{
+		stopMining(mi)
+		newblockid := g.baseblockid + int64(len(g.blocks))
+		trace("%.2f %s mined-newid %d height %d\n",
+			g.currenttime, g.miners[mi].name,
+			newblockid, getheight(m.current)+1)
+		g.blocks = append(g.blocks, block_t{
 			parent: m.current,
 			height: getheight(m.current) + 1,
 			miner:  mi})
+		relay(mi, newblockid)
 		prev := m.current
-		stopMining(mi)
-		startMining(mi, baseblockid+int64(len(blocks))-1)
-		if prev == bestblock {
-			// we're extending what's already the best chain
-			bestblock = m.current
+		startMining(mi, newblockid)
+		if prev == g.bestblockid {
+			// We're extending the best chain.
+			trace("%.2f %s extend %d\n",
+				g.currenttime, g.miners[mi].name, prev)
+			g.bestblockid = m.current
 			m.credit++
 			continue
 		}
-		if getheight(m.current) <= getheight(bestblock) {
+		if getheight(m.current) <= getheight(g.bestblockid) {
 			// we're mining on a non-best branch
+			trace("%.2f %s nonbest %d\n",
+				g.currenttime, g.miners[mi].name, prev)
 			continue
 		}
 		// The current chain now has one more block than what was
 		// the best chain (reorg), adjust credits.
+		trace("%.2f %s reorg %d %d\n",
+			g.currenttime, g.miners[mi].name, g.bestblockid, m.current)
 		m.credit++
-		dec := bestblock // decrement credits on this branch
-		inc := prev      // increment credits on this branch
+		dec := g.bestblockid // decrement credits on this branch
+		inc := prev          // increment credits on this branch
 		for dec != inc {
 			db := getblock(dec)
 			ib := getblock(inc)
-			miners[db.miner].credit--
-			miners[ib.miner].credit++
+			g.miners[db.miner].credit--
+			g.miners[ib.miner].credit++
 			dec = db.parent
 			inc = ib.parent
 		}
-		bestblock = m.current
+		g.bestblockid = m.current
 	}
 	var totalblocks int
+	var minedblocks int
 	var totalorphans int
 	var totalhash float64
-	for _, m := range miners {
+	for _, m := range g.miners {
 		totalblocks += m.credit
+		minedblocks += m.mined
 		totalorphans += m.mined - m.credit
 		totalhash += m.hashrate
 	}
-	fmt.Printf("total-blocks %d\n", totalblocks)
-	fmt.Printf("total-simtime %.2f\n", currenttime)
-	fmt.Printf("ave-block-time %.2f\n", float64(currenttime)/float64(totalblocks))
-	fmt.Printf("total-hash-rate %f\n", totalhash)
-	fmt.Printf("effective-hash-rate %.2f\n", difficulty*1e6/currenttime*float64(totalblocks))
-	fmt.Printf("total-orphans %d\n", totalorphans)
-	for _, m := range miners {
-		fmt.Printf("miner %s hashrate %.2f %.2f%% ", m.name, m.hashrate, m.hashrate*100/totalhash)
-		fmt.Printf("blocks %.2f%% ", float64(m.credit*100)/float64(totalblocks))
-		fmt.Printf("orphans %.2f%%", float64((m.mined-m.credit)*100)/float64(totalorphans))
+	fmt.Printf("difficulty %.2f\n",
+		g.difficulty)
+	fmt.Printf("mined-blocks %d\n",
+		minedblocks)
+	fmt.Printf("height %d %.2f%%\n", totalblocks,
+		float64(totalblocks)*100/float64(minedblocks))
+	fmt.Printf("total-simtime %.2f\n",
+		g.currenttime)
+	fmt.Printf("ave-block-time %.2f\n",
+		float64(g.currenttime)/float64(totalblocks))
+	fmt.Printf("total-hashrate %.2f\n",
+		totalhash)
+	effectivehash := g.difficulty * 1e6 / g.currenttime * float64(totalblocks)
+	fmt.Printf("effective-hashrate %.2f %.2f%%\n",
+		effectivehash, effectivehash*100/totalhash)
+	fmt.Printf("total-orphans %d\n",
+		totalorphans)
+	for _, m := range g.miners {
+		fmt.Printf("miner %s hashrate %.2f %.2f%% ", m.name,
+			m.hashrate, m.hashrate*100/totalhash)
+		fmt.Printf("blocks %.2f%% ",
+			float64(m.credit*100)/float64(totalblocks))
+		fmt.Printf("orphans %.2f%%",
+			float64((m.mined-m.credit)*100)/float64(m.mined))
 		fmt.Println("")
 	}
 }
