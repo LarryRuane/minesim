@@ -16,17 +16,19 @@ import (
 )
 
 var g struct {
-	currenttime float64
-	r           *rand.Rand
-	blocks      []block_t     // ordered by oldest first
-	baseblockid int64         // blocks[0] corresponds to this block id
-	tips        map[int64]int // for pruning
-	bestblockid int64         // tip has a max height (may not be unique)
-	miners      []miner_t     // one per miner (unordered)
-	eventlist   eventlist_t   // priority queue, lowest timestamp first
-	difficulty  float64       // increase average block time
-	iterations  int
-	trace       bool
+	currenttime   float64
+	r             *rand.Rand
+	blocks        []block_t     // ordered by oldest first
+	baseblockid   int64         // blocks[0] corresponds to this block id
+	tips          map[int64]int // for pruning
+	bestblockid   int64         // tip has a max height (may not be unique)
+	miners        []miner_t     // one per miner (unordered)
+	eventlist     eventlist_t   // priority queue, lowest timestamp first
+	difficulty    float64       // increase average block time
+	blockinterval float64       // target, if zero, use difficulty
+	totalhash     float64
+	repetitions   int
+	trace         bool
 }
 
 func init() {
@@ -41,8 +43,9 @@ func init() {
 	g.eventlist = make([]event_t, 0)
 
 	flag.BoolVar(&g.trace, "t", false, "print execution trace to stdout")
-	flag.IntVar(&g.iterations, "i", 20, "number of simulation steps")
-	flag.Float64Var(&g.difficulty, "d", 1, "difficulty")
+	flag.IntVar(&g.repetitions, "r", 20, "number of simulation steps")
+	flag.Float64Var(&g.difficulty, "d", -1, "difficulty")
+	flag.Float64Var(&g.blockinterval, "i", -1, "average block interval")
 }
 
 func trace(format string, a ...interface{}) (n int, err error) {
@@ -136,8 +139,12 @@ func startMining(mi int, blockid int64) {
 
 	// Schedule an event for when our "mining" will be done
 	// (the larger the hashrate, the smaller the delay).
-	delay := -math.Log(1.0 - rand.Float64())
-	delay *= float64(1e6) / m.hashrate * g.difficulty
+	delay := -math.Log(1.0-rand.Float64()) / m.hashrate
+	if g.blockinterval == -1 {
+		delay *= 1e6 * g.difficulty
+	} else {
+		delay *= g.blockinterval * g.totalhash
+	}
 	// negative blockid means mining (not p2p)
 	heap.Push(&g.eventlist, event_t{
 		when:    g.currenttime + delay,
@@ -150,14 +157,17 @@ func startMining(mi int, blockid int64) {
 
 func main() {
 	flag.Parse()
+	if g.difficulty != -1 && g.blockinterval != -1 {
+		fmt.Fprintln(os.Stderr, "can't specify both -difficulty and -blockinterval")
+	}
 	var err error
 	if flag.NArg() < 1 {
-		fmt.Println("network-file required")
+		fmt.Fprintln(os.Stderr, "network-file required")
 		os.Exit(1)
 	}
 	f, err := os.Open(flag.Arg(0))
 	if err != nil {
-		fmt.Println("open failed:", err)
+		fmt.Fprintln(os.Stderr, "open failed:", err)
 		os.Exit(1)
 	}
 	minerMap := make(map[string][]string, 0)
@@ -175,7 +185,7 @@ func main() {
 			continue
 		}
 		if _, ok := minerMap[fields[0]]; ok {
-			fmt.Println("duplicate miner name:", fields[0])
+			fmt.Fprintln(os.Stderr, "duplicate miner name:", fields[0])
 			os.Exit(1)
 		}
 		minerMap[fields[0]] = fields[1:]
@@ -187,29 +197,30 @@ func main() {
 		// v is a slice of whitespace-separated tokens (on a line)
 		hr, err := strconv.ParseFloat(v[0], 64)
 		if err != nil {
-			fmt.Println("bad hashrate:", v[0], err)
+			fmt.Fprintln(os.Stderr, "bad hashrate:", v[0], err)
 			os.Exit(1)
 		}
 		if hr <= 0 {
-			fmt.Println("hashrate must be greater than zero:", v[0])
+			fmt.Fprintln(os.Stderr, "hashrate must be greater than zero:", v[0])
 			os.Exit(1)
 		}
+		g.totalhash += hr
 		m := miner_t{hashrate: hr}
 		m.name = k
 		m.index = minerIndex[k]
 		v = v[1:]
 		if (len(v) % 2) > 0 {
-			fmt.Println("bad client delay pairs:", k, v)
+			fmt.Fprintln(os.Stderr, "bad client delay pairs:", k, v)
 			os.Exit(1)
 		}
 		for len(v) > 0 {
 			if _, ok := minerIndex[v[0]]; !ok {
-				fmt.Println("no such miner:", v[0])
+				fmt.Fprintln(os.Stderr, "no such miner:", v[0])
 				os.Exit(1)
 			}
 			delay, err := strconv.ParseFloat(v[1], 64)
 			if err != nil {
-				fmt.Println("bad delay:", v[1], err)
+				fmt.Fprintln(os.Stderr, "bad delay:", v[1], err)
 				os.Exit(1)
 			}
 			m.peer = append(m.peer, peer_t{minerIndex[v[0]], delay})
@@ -225,7 +236,7 @@ func main() {
 	}
 
 	// should this be based instead on time?
-	for i := 0; i < g.iterations; i++ {
+	for i := 0; i < g.repetitions; i++ {
 		// clean up unneeded blocks
 		if len(g.tips) == 1 {
 			for {
@@ -308,15 +319,17 @@ func main() {
 	var totalblocks int
 	var minedblocks int
 	var totalorphans int
-	var totalhash float64
 	for _, m := range g.miners {
 		totalblocks += m.credit
 		minedblocks += m.mined
 		totalorphans += m.mined - m.credit
-		totalhash += m.hashrate
 	}
-	fmt.Printf("difficulty %.2f\n",
-		g.difficulty)
+	if g.difficulty > 0 {
+		fmt.Printf("difficulty %.2f\n", g.difficulty)
+	}
+	if g.blockinterval > 0 {
+		fmt.Printf("block-interval %.2f\n", g.blockinterval)
+	}
 	fmt.Printf("mined-blocks %d\n",
 		minedblocks)
 	fmt.Printf("height %d %.2f%%\n", totalblocks,
@@ -326,15 +339,15 @@ func main() {
 	fmt.Printf("ave-block-time %.2f\n",
 		float64(g.currenttime)/float64(totalblocks))
 	fmt.Printf("total-hashrate %.2f\n",
-		totalhash)
+		g.totalhash)
 	effectivehash := g.difficulty * 1e6 / g.currenttime * float64(totalblocks)
 	fmt.Printf("effective-hashrate %.2f %.2f%%\n",
-		effectivehash, effectivehash*100/totalhash)
+		effectivehash, effectivehash*100/g.totalhash)
 	fmt.Printf("total-orphans %d\n",
 		totalorphans)
 	for _, m := range g.miners {
 		fmt.Printf("miner %s hashrate %.2f %.2f%% ", m.name,
-			m.hashrate, m.hashrate*100/totalhash)
+			m.hashrate, m.hashrate*100/g.totalhash)
 		fmt.Printf("blocks %.2f%% ",
 			float64(m.credit*100)/float64(totalblocks))
 		fmt.Printf("orphans %.2f%%",
