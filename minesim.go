@@ -28,7 +28,8 @@ var g struct {
 	blockinterval float64       // target, if zero, use difficulty
 	totalhash     float64
 	repetitions   int
-	trace         bool
+	traceenable   bool
+	trace         trace_t
 }
 
 func init() {
@@ -41,19 +42,17 @@ func init() {
 	g.tips = make(map[int64]int, 0)
 	g.bestblockid = 1
 	g.eventlist = make([]event_t, 0)
+	g.trace = func(format string, a ...interface{}) (n int, err error) {
+		return 0, nil
+	}
 
-	flag.BoolVar(&g.trace, "t", false, "print execution trace to stdout")
+	flag.BoolVar(&g.traceenable, "t", false, "print execution trace to stdout")
 	flag.IntVar(&g.repetitions, "r", 20, "number of simulation steps")
 	flag.Float64Var(&g.difficulty, "d", -1, "difficulty")
 	flag.Float64Var(&g.blockinterval, "i", -1, "average block interval")
 }
 
-func trace(format string, a ...interface{}) (n int, err error) {
-	if g.trace {
-		return fmt.Printf(format, a...)
-	}
-	return 0, nil
-}
+type trace_t func(format string, a ...interface{}) (n int, err error)
 
 type block_t struct {
 	parent int64 // first block is the only block with parent = zero
@@ -139,20 +138,20 @@ func startMining(mi int, blockid int64) {
 
 	// Schedule an event for when our "mining" will be done
 	// (the larger the hashrate, the smaller the delay).
-	delay := -math.Log(1.0-rand.Float64()) / m.hashrate
+	solvetime := -math.Log(1.0-rand.Float64()) / m.hashrate
 	if g.blockinterval == -1 {
-		delay *= 1e6 * g.difficulty
+		solvetime *= 1e6 * g.difficulty
 	} else {
-		delay *= g.blockinterval * g.totalhash
+		solvetime *= g.blockinterval * g.totalhash
 	}
 	// negative blockid means mining (not p2p)
 	heap.Push(&g.eventlist, event_t{
-		when:    g.currenttime + delay,
+		when:    g.currenttime + solvetime,
 		to:      mi,
 		blockid: -blockid})
-	trace("%.2f %s start-on %d height %d nmined %d credit %d delay %.2f\n",
+	g.trace("%.2f %s start-on %d height %d nmined %d credit %d solvetime %.2f\n",
 		g.currenttime, m.name, blockid, getheight(blockid),
-		m.mined, m.credit, delay)
+		m.mined, m.credit, solvetime)
 }
 
 func main() {
@@ -169,6 +168,9 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "open failed:", err)
 		os.Exit(1)
+	}
+	if g.traceenable {
+		g.trace = fmt.Printf
 	}
 	minerMap := make(map[string][]string, 0)
 	minerIndex := make(map[string]int, 0)
@@ -258,7 +260,7 @@ func main() {
 				getheight(m.current) < getheight(event.blockid) {
 				// incoming block is better, switch to it
 				stopMining(mi)
-				trace("%.2f %s received-switch-to %d\n",
+				g.trace("%.2f %s received-switch-to %d\n",
 					g.currenttime, g.miners[mi].name, event.blockid)
 				relay(mi, event.blockid)
 				startMining(mi, event.blockid)
@@ -275,7 +277,7 @@ func main() {
 		m.mined++
 		stopMining(mi)
 		newblockid := g.baseblockid + int64(len(g.blocks))
-		trace("%.2f %s mined-newid %d height %d\n",
+		g.trace("%.2f %s mined-newid %d height %d\n",
 			g.currenttime, g.miners[mi].name,
 			newblockid, getheight(m.current)+1)
 		g.blocks = append(g.blocks, block_t{
@@ -287,7 +289,7 @@ func main() {
 		startMining(mi, newblockid)
 		if prev == g.bestblockid {
 			// We're extending the best chain.
-			trace("%.2f %s extend %d\n",
+			g.trace("%.2f %s extend %d\n",
 				g.currenttime, g.miners[mi].name, prev)
 			g.bestblockid = m.current
 			m.credit++
@@ -295,13 +297,13 @@ func main() {
 		}
 		if getheight(m.current) <= getheight(g.bestblockid) {
 			// we're mining on a non-best branch
-			trace("%.2f %s nonbest %d\n",
+			g.trace("%.2f %s nonbest %d\n",
 				g.currenttime, g.miners[mi].name, prev)
 			continue
 		}
 		// The current chain now has one more block than what was
 		// the best chain (reorg), adjust credits.
-		trace("%.2f %s reorg %d %d\n",
+		g.trace("%.2f %s reorg %d %d\n",
 			g.currenttime, g.miners[mi].name, g.bestblockid, m.current)
 		m.credit++
 		dec := g.bestblockid // decrement credits on this branch
