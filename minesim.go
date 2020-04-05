@@ -13,6 +13,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var g struct {
@@ -30,6 +31,7 @@ var g struct {
 	repetitions   int
 	traceenable   bool
 	trace         trace_t
+	seed          int64
 }
 
 func init() {
@@ -50,6 +52,7 @@ func init() {
 	flag.IntVar(&g.repetitions, "r", 20, "number of simulation steps")
 	flag.Float64Var(&g.difficulty, "d", -1, "difficulty")
 	flag.Float64Var(&g.blockinterval, "i", -1, "average block interval")
+	flag.Int64Var(&g.seed, "s", 0, "random number seed, -1 to use wall-clock")
 }
 
 type trace_t func(format string, a ...interface{}) (n int, err error)
@@ -149,7 +152,7 @@ func startMining(mi int, blockid int64) {
 		when:    g.currenttime + solvetime,
 		to:      mi,
 		blockid: -blockid})
-	g.trace("%.2f %s start-on %d height %d nmined %d credit %d solvetime %.2f\n",
+	g.trace("%.2f %s start-on %d height %d nmined %d credit %d solve %.2f\n",
 		g.currenttime, m.name, blockid, getheight(blockid),
 		m.mined, m.credit, solvetime)
 }
@@ -171,6 +174,12 @@ func main() {
 	}
 	if g.traceenable {
 		g.trace = fmt.Printf
+	}
+	if g.seed == -1 {
+		g.seed = time.Now().UnixNano()
+	}
+	if g.seed > 0 {
+		rand.Seed(g.seed)
 	}
 	minerMap := make(map[string][]string, 0)
 	minerIndex := make(map[string]int, 0)
@@ -313,6 +322,10 @@ func main() {
 			ib := getblock(inc)
 			g.miners[db.miner].credit--
 			g.miners[ib.miner].credit++
+			g.trace("%.2f reorg height %d dec %s %d inc %s %d\n",
+				g.currenttime, db.height,
+				g.miners[db.miner].name, g.miners[db.miner].credit,
+				g.miners[ib.miner].name, g.miners[ib.miner].credit)
 			dec = db.parent
 			inc = ib.parent
 		}
@@ -326,11 +339,12 @@ func main() {
 		minedblocks += m.mined
 		totalorphans += m.mined - m.credit
 	}
+	fmt.Printf("seed-arg %d\n", g.seed)
 	if g.difficulty > 0 {
-		fmt.Printf("difficulty %.2f\n", g.difficulty)
+		fmt.Printf("difficulty-arg %.2f\n", g.difficulty)
 	}
 	if g.blockinterval > 0 {
-		fmt.Printf("block-interval %.2f\n", g.blockinterval)
+		fmt.Printf("block-interval-arg %.2f\n", g.blockinterval)
 	}
 	fmt.Printf("mined-blocks %d\n",
 		minedblocks)
@@ -340,15 +354,13 @@ func main() {
 		g.currenttime)
 	fmt.Printf("ave-block-time %.2f\n",
 		float64(g.currenttime)/float64(totalblocks))
-	fmt.Printf("total-hashrate %.2f\n",
+	fmt.Printf("total-hashrate-arg %.2f\n",
 		g.totalhash)
-	effectivehash := g.difficulty * 1e6 / g.currenttime * float64(totalblocks)
-	fmt.Printf("effective-hashrate %.2f %.2f%%\n",
-		effectivehash, effectivehash*100/g.totalhash)
 	fmt.Printf("total-orphans %d\n",
 		totalorphans)
+	fmt.Printf("baseblockid %d\n", g.baseblockid)
 	for _, m := range g.miners {
-		fmt.Printf("miner %s hashrate %.2f %.2f%% ", m.name,
+		fmt.Printf("miner %s hashrate-arg %.2f %.2f%% ", m.name,
 			m.hashrate, m.hashrate*100/g.totalhash)
 		fmt.Printf("blocks %.2f%% ",
 			float64(m.credit*100)/float64(totalblocks))
