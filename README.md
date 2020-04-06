@@ -11,7 +11,7 @@ simulates:
 - random block discovery (mining) according to (realistic) poisson distribution
 - a configurable set of peer mining nodes, each with a specified hash power
 - configurable peer network topology
-- block forwarding (relaying to peers)
+- simple block forwarding (relaying to peers)
 - message-passing latency from each peer to its given set of other peers
 - chain splits (reorgs)
 
@@ -19,6 +19,8 @@ It does not simulate:
 
 - actual POW computation (hashing)
 - transactions
+- real block forwarding (https://bitcoin.org/en/p2p-network-guide#block-broadcasting)
+- Byzantine (faulty or malicious) behaviors
 - non-mining nodes
 - miners coming and going
 - difficulty adjustment
