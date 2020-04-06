@@ -17,8 +17,8 @@ import (
 )
 
 var g struct {
-	currenttime   float64
-	r             *rand.Rand
+	currenttime   float64       // simulated time since start
+	r             *rand.Rand    // for block interval calculation
 	blocks        []block_t     // ordered by oldest first
 	baseblockid   int64         // blocks[0] corresponds to this block id
 	tips          map[int64]int // for pruning
@@ -27,11 +27,11 @@ var g struct {
 	eventlist     eventlist_t   // priority queue, lowest timestamp first
 	difficulty    float64       // increase average block time
 	blockinterval float64       // target, if zero, use difficulty
-	totalhash     float64
-	repetitions   int
-	traceenable   bool
-	trace         trace_t
-	seed          int64
+	totalhash     float64       // sum of miners' hashrates
+	repetitions   int           // number of simulation steps
+	traceenable   bool          // show details of each sim step
+	trace         trace_t       // show details of each sim step
+	seed          int64         // random number seed, -1 means use wall-clock
 }
 
 func init() {
@@ -160,7 +160,8 @@ func startMining(mi int, blockid int64) {
 func main() {
 	flag.Parse()
 	if g.difficulty != -1 && g.blockinterval != -1 {
-		fmt.Fprintln(os.Stderr, "can't specify both -difficulty and -blockinterval")
+		fmt.Fprintln(os.Stderr,
+			"can't specify both -difficulty and -blockinterval")
 	}
 	var err error
 	if flag.NArg() < 1 {
@@ -333,11 +334,11 @@ func main() {
 	}
 	var totalblocks int
 	var minedblocks int
-	var totalorphans int
+	var totalstale int
 	for _, m := range g.miners {
 		totalblocks += m.credit
 		minedblocks += m.mined
-		totalorphans += m.mined - m.credit
+		totalstale += m.mined - m.credit
 	}
 	fmt.Printf("seed-arg %d\n", g.seed)
 	if g.difficulty > 0 {
@@ -356,15 +357,16 @@ func main() {
 		float64(g.currenttime)/float64(totalblocks))
 	fmt.Printf("total-hashrate-arg %.2f\n",
 		g.totalhash)
-	fmt.Printf("total-orphans %d\n",
-		totalorphans)
+	fmt.Printf("total-stale %d\n",
+		totalstale)
 	fmt.Printf("baseblockid %d\n", g.baseblockid)
+	fmt.Printf("repetitions %d\n", g.repetitions)
 	for _, m := range g.miners {
 		fmt.Printf("miner %s hashrate-arg %.2f %.2f%% ", m.name,
 			m.hashrate, m.hashrate*100/g.totalhash)
 		fmt.Printf("blocks %.2f%% ",
 			float64(m.credit*100)/float64(totalblocks))
-		fmt.Printf("orphans %.2f%%",
+		fmt.Printf("stale %.2f%%",
 			float64((m.mined-m.credit)*100)/float64(m.mined))
 		fmt.Println("")
 	}
