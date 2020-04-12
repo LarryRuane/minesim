@@ -1,7 +1,15 @@
 # minesim -- Cryptocurrency POW mining simulator
 
 This program simulates a POW mining network, such as Zcash or Bitcoin
-(or many others). Like any simulator, it abstracts away a huge amount of
+(or many others). 
+
+## License
+
+This software is released under the terms of the MIT license, see https://opensource.org/licenses/MIT.
+
+### Introduction
+
+Like any simulator, it abstracts away a huge amount of
 stuff (if it didn't, it wouldn't be a simulator, it would be the thing
 itself). It's a single executable written in Go. It can simulate the
 generation of many thousands of blocks per second of real CPU time. It
