@@ -125,3 +125,11 @@ The average block time was 75.87 seconds, which differs from the requested
 75 seconds due to random variations, and also due to orphaned blocks --
 the higher the orphan rate, the greater the average block time will be
 because some of the hash power is wasted.
+
+### Block-interval simulators
+
+This repository also includes two simple Python programs to generate
+simulated block intervals based on the Poisson distribution. They have
+equivalent functionality, but `blockint.py` is much more efficient. Its
+algorithm is used in the simulator. The other program more closely
+simulates actual mining (repeated attempts to "solve" a block).
