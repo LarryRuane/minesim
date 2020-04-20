@@ -21,22 +21,59 @@ import (
 )
 
 var g struct {
-	currenttime   float64       // simulated time since start
-	r             *rand.Rand    // for block interval calculation
-	blocks        []block_t     // ordered by oldest first
-	baseblockid   int64         // blocks[0] corresponds to this block id
-	tips          map[int64]int // for pruning
-	bestblockid   int64         // tip has a max height (may not be unique)
-	miners        []miner_t     // one per miner (unordered)
-	eventlist     eventlist_t   // priority queue, lowest timestamp first
-	difficulty    float64       // increase average block time
-	blockinterval float64       // target, if zero, use difficulty
-	totalhash     float64       // sum of miners' hashrates
-	repetitions   int           // number of simulation steps
-	traceenable   bool          // show details of each sim step
-	trace         trace_t       // show details of each sim step
-	seed          int64         // random number seed, -1 means use wall-clock
+	// Arguments:
+	network       string  // pathname of network topology file
+	blockinterval float64 // average time between blocks
+	repetitions   int     // number of simulation steps
+	traceenable   bool    // show details of each sim step
+	seed          int64   // random number seed, -1 means use wall-clock
+
+	// Main simulator state:
+	currenttime float64     // simulated time since start
+	blocks      []block_t   // indexed by blockid, ordered by oldest first
+	miners      []miner_t   // one per miner (unordered)
+	bestblockid int64       // tip has a max height (may not be unique)
+	eventlist   eventlist_t // priority queue, lowest timestamp first
+
+	// Implementation detail simulator state:
+	baseblockid int64         // blocks[0] corresponds to this block id
+	tips        map[int64]int // for pruning
+	r           *rand.Rand    // for block interval calculation
+	trace       trace_t       // show details of each sim step
+	totalhash   float64       // sum of miners' hashrates
 }
+
+type (
+	block_t struct {
+		parent int64 // first block is the only block with parent = zero
+		height int   // more than one block can have the same height
+		miner  int   // which miner found this block
+	}
+
+	// The set of miners and their peers is static (at least for now).
+	peer_t struct {
+		miner int
+		delay float64
+	}
+	miner_t struct {
+		name     string
+		index    int      // in miner[]
+		hashrate float64  // how much hashing power this miner has
+		mined    int      // how many blocks we've mined total (including reorg)
+		credit   int      // how many blocks we've mined we get credit for
+		peer     []peer_t // outbound peers (we forward blocks to these miners)
+		current  int64    // the blockid we're trying to mine onto, initially 1
+	}
+
+	// The only event is the arrival of a block at a miner; if the block id is
+	// negative, that means this miner mined a new block on this blockid.
+	event_t struct {
+		when    float64 // time of block arrival
+		to      int     // which miner gets the block
+		blockid int64   // >0: arriving on p2p, <0: block we're mining on
+	}
+	eventlist_t []event_t
+)
 
 func init() {
 	// Our genesis block has height 1.
@@ -52,20 +89,14 @@ func init() {
 		return 0, nil
 	}
 
-	flag.BoolVar(&g.traceenable, "t", false, "print execution trace to stdout")
+	flag.StringVar(&g.network, "f", "./network", "network topology file")
+	flag.Float64Var(&g.blockinterval, "i", 300, "average block interval")
 	flag.IntVar(&g.repetitions, "r", 20, "number of simulation steps")
-	flag.Float64Var(&g.difficulty, "d", -1, "difficulty")
-	flag.Float64Var(&g.blockinterval, "i", -1, "average block interval")
+	flag.BoolVar(&g.traceenable, "t", false, "print execution trace to stdout")
 	flag.Int64Var(&g.seed, "s", 0, "random number seed, -1 to use wall-clock")
 }
 
 type trace_t func(format string, a ...interface{}) (n int, err error)
-
-type block_t struct {
-	parent int64 // first block is the only block with parent = zero
-	height int   // more than one block can have the same height
-	miner  int   // which miner found this block
-}
 
 func getblock(blockid int64) *block_t {
 	return &g.blocks[blockid-g.baseblockid]
@@ -73,34 +104,6 @@ func getblock(blockid int64) *block_t {
 func getheight(blockid int64) int {
 	return g.blocks[blockid-g.baseblockid].height
 }
-
-// The set of miners is static (at least for now).
-type (
-	peer_t struct {
-		miner int
-		delay float64
-	}
-	miner_t struct {
-		name     string
-		index    int      // in miner[]
-		hashrate float64  // how much hashing power this miner has
-		mined    int      // how many blocks we've mined total (including reorg)
-		credit   int      // how many blocks we've mined we get credit for
-		peer     []peer_t // outbound peers (we forward blocks to these miners)
-		current  int64    // the blockid we're trying to mine onto, initially 1
-	}
-)
-
-// The only event is the arrival of a block at a miner; if the block id is
-// negative, that means this miner mined a new block on this blockid.
-type (
-	event_t struct {
-		when    float64 // time of block arrival
-		to      int     // which miner gets the block
-		blockid int64   // >0: arriving on p2p, <0: block we're mining on
-	}
-	eventlist_t []event_t
-)
 
 func (e eventlist_t) Len() int           { return len(e) }
 func (e eventlist_t) Less(i, j int) bool { return e[i].when < e[j].when }
@@ -125,10 +128,12 @@ func stopMining(mi int) {
 }
 
 // Relay a newly-discovered block (either mined or relayed to us) to our peers.
+// This sends a message to the peer we received the block from (if it's one
+// of our peers), but that's okay, it will be ignored.
 func relay(mi int, newblockid int64) {
 	m := &g.miners[mi]
 	for _, p := range m.peer {
-		// jitter this delay, or sometimes fail to forward?
+		// TODO jitter this delay, or sometimes fail to forward?
 		heap.Push(&g.eventlist, event_t{
 			when:    g.currenttime + p.delay,
 			to:      p.miner,
@@ -143,14 +148,10 @@ func startMining(mi int, blockid int64) {
 	m.current = blockid
 	g.tips[m.current]++
 
-	// Schedule an event for when our "mining" will be done
-	// (the larger the hashrate, the smaller the delay).
-	solvetime := -math.Log(1.0-rand.Float64()) / m.hashrate
-	if g.blockinterval == -1 {
-		solvetime *= 1e6 * g.difficulty
-	} else {
-		solvetime *= g.blockinterval * g.totalhash
-	}
+	// Schedule an event for when our "mining" will be done.
+	solvetime := -math.Log(1.0-rand.Float64()) *
+		g.blockinterval * g.totalhash / m.hashrate
+
 	// negative blockid means mining (not p2p)
 	heap.Push(&g.eventlist, event_t{
 		when:    g.currenttime + solvetime,
@@ -163,16 +164,8 @@ func startMining(mi int, blockid int64) {
 
 func main() {
 	flag.Parse()
-	if g.difficulty != -1 && g.blockinterval != -1 {
-		fmt.Fprintln(os.Stderr,
-			"can't specify both -difficulty and -blockinterval")
-	}
 	var err error
-	if flag.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "network-file required")
-		os.Exit(1)
-	}
-	f, err := os.Open(flag.Arg(0))
+	networkfile, err := os.Open(g.network)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "open failed:", err)
 		os.Exit(1)
@@ -189,7 +182,7 @@ func main() {
 	minerMap := make(map[string][]string, 0)
 	minerIndex := make(map[string]int, 0)
 	i := 0
-	scan := bufio.NewScanner(f)
+	scan := bufio.NewScanner(networkfile)
 	for scan.Scan() { // each line
 		// Each line is a hashrate, then a list of pairs of
 		// client id and delay (time to send to that client)
@@ -208,6 +201,8 @@ func main() {
 		minerIndex[fields[0]] = i
 		i++
 	}
+
+	// Set up (static) set of miners.
 	g.miners = make([]miner_t, i)
 	for k, v := range minerMap {
 		// v is a slice of whitespace-separated tokens (on a line)
@@ -251,9 +246,8 @@ func main() {
 		startMining(mi, 1)
 	}
 
-	// should this be based instead on time?
 	for i := 0; i < g.repetitions; i++ {
-		// clean up unneeded blocks
+		// clean up (prune) unneeded blocks
 		if len(g.tips) == 1 {
 			for {
 				if _, ok := g.tips[g.baseblockid]; ok {
@@ -310,7 +304,7 @@ func main() {
 			continue
 		}
 		if getheight(m.current) <= getheight(g.bestblockid) {
-			// we're mining on a non-best branch
+			// We're mining on a non-best branch.
 			g.trace("%.2f %s nonbest %d\n",
 				g.currenttime, g.miners[mi].name, prev)
 			continue
@@ -345,9 +339,6 @@ func main() {
 		totalstale += m.mined - m.credit
 	}
 	fmt.Printf("seed-arg %d\n", g.seed)
-	if g.difficulty > 0 {
-		fmt.Printf("difficulty-arg %.2f\n", g.difficulty)
-	}
 	if g.blockinterval > 0 {
 		fmt.Printf("block-interval-arg %.2f\n", g.blockinterval)
 	}
