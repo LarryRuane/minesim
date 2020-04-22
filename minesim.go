@@ -36,8 +36,9 @@ var g struct {
 
 	// Implementation detail simulator state:
 	baseblockid int64         // blocks[0] corresponds to this block id
-	tips        map[int64]int // for pruning
+	tips        map[int64]int // actively being mined on, for pruning
 	r           *rand.Rand    // for block interval calculation
+	maxreorg    int           // greatest depth reorg
 	trace       trace_t       // show details of each sim step
 	totalhash   float64       // sum of miners' hashrates
 }
@@ -47,6 +48,7 @@ type (
 		parent int64 // first block is the only block with parent = zero
 		height int   // more than one block can have the same height
 		miner  int   // which miner found this block
+		best   bool  // at least at one time, this block had highest height
 	}
 
 	// The set of miners and their peers is static (at least for now).
@@ -127,6 +129,42 @@ func stopMining(mi int) {
 	g.tips[m.current]--
 	if g.tips[m.current] == 0 {
 		delete(g.tips, m.current)
+		b := getblock(m.current)
+		if !b.best {
+			return
+		}
+		// No one remains mining on this block, and it's guaranteed no one
+		// ever will, so see if this was reorg.
+		maxreorg := 0
+		for blockid := range g.tips {
+			t := getblock(blockid)
+			if !t.best {
+				continue
+			}
+			if t.height <= b.height {
+				continue
+			}
+			for t.height > b.height {
+				t = getblock(t.parent)
+			}
+			// Count blocks until these branches meet.
+			reorg := 0
+			for t != b {
+				reorg++
+				t = getblock(t.parent)
+				b = getblock(b.parent)
+			}
+			if maxreorg < reorg {
+				maxreorg = reorg
+			}
+		}
+		if g.maxreorg < maxreorg {
+			g.maxreorg = maxreorg
+		}
+		if maxreorg > 0 {
+			g.trace("%.3f %s reorg %d maxreorg %d\n",
+				g.currenttime, m.name, maxreorg, g.maxreorg)
+		}
 	}
 }
 
@@ -165,7 +203,7 @@ func startMining(mi int, blockid int64) {
 		mining:  true,
 		when:    g.currenttime + solvetime,
 		blockid: blockid})
-	g.trace("%.3f %s start-on %d height %d nmined %d credit %d solve %.2f\n",
+	g.trace("%.3f %s start-on %d height %d mined %d credit %d solve %.2f\n",
 		g.currenttime, m.name, blockid, getheight(blockid),
 		m.mined, m.credit, solvetime)
 }
@@ -286,13 +324,22 @@ func main() {
 			m.mined++
 			stopMining(mi)
 			ev.blockid = g.baseblockid + int64(len(g.blocks))
-			g.trace("%.3f %s mined-newid %d height %d\n",
-				g.currenttime, g.miners[mi].name,
-				ev.blockid, height+1)
+			height++
+			best := true
+			for blockid := range g.tips {
+				if getblock(blockid).height >= height {
+					best = false
+					break
+				}
+			}
 			g.blocks = append(g.blocks, block_t{
 				parent: m.current,
-				height: height + 1,
+				height: height,
+				best:   best,
 				miner:  mi})
+			g.trace("%.3f %s mined-newid %d height %d best %t\n",
+				g.currenttime, g.miners[mi].name,
+				ev.blockid, height, best)
 		} else {
 			// Block received from a peer.
 			if !validblock(ev.blockid) || getheight(ev.blockid) <= height {
@@ -331,6 +378,7 @@ func main() {
 		g.totalhash)
 	fmt.Printf("total-stale %d\n",
 		totalstale)
+	fmt.Printf("max-reorg-depth %d\n", g.maxreorg)
 	fmt.Printf("baseblockid %d\n", g.baseblockid)
 	fmt.Printf("repetitions-arg %d\n", g.repetitions)
 	fmt.Printf("repetitions %d\n", rep)

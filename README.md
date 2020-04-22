@@ -110,6 +110,7 @@ total-simtime 8453695.57
 ave-block-time 76.06
 total-hashrate-arg 3450.00
 total-stale 1302
+max-reorg-depth 3
 baseblockid 112434
 repetitions-arg 1000000
 repetitions 1000004
