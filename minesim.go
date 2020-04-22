@@ -165,7 +165,7 @@ func startMining(mi int, blockid int64) {
 		mining:  true,
 		when:    g.currenttime + solvetime,
 		blockid: blockid})
-	g.trace("%.2f %s start-on %d height %d nmined %d credit %d solve %.2f\n",
+	g.trace("%.3f %s start-on %d height %d nmined %d credit %d solve %.2f\n",
 		g.currenttime, m.name, blockid, getheight(blockid),
 		m.mined, m.credit, solvetime)
 }
@@ -286,7 +286,7 @@ func main() {
 			m.mined++
 			stopMining(mi)
 			ev.blockid = g.baseblockid + int64(len(g.blocks))
-			g.trace("%.2f %s mined-newid %d height %d\n",
+			g.trace("%.3f %s mined-newid %d height %d\n",
 				g.currenttime, g.miners[mi].name,
 				ev.blockid, height+1)
 			g.blocks = append(g.blocks, block_t{
@@ -301,7 +301,7 @@ func main() {
 			}
 			// This block is better, switch to it.
 			stopMining(mi)
-			g.trace("%.2f %s received-switch-to %d\n",
+			g.trace("%.3f %s received-switch-to %d\n",
 				g.currenttime, g.miners[mi].name, ev.blockid)
 		}
 		relay(mi, ev.blockid)
