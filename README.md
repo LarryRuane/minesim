@@ -110,7 +110,8 @@ total-simtime 5837580.96
 ave-block-time 75.87
 total-hashrate-arg 3450.00
 total-stale 885
-baseblockid 77823
+baseblockid 77818
+repetitions-arg 1000000
 repetitions 1000000
 miner china-asic hashrate-arg 500.00 14.49% blocks 14.15% stale 4.65%
 miner china-gpu hashrate-arg 80.00 2.32% blocks 2.21% stale 4.87%

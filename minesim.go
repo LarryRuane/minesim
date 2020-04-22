@@ -32,7 +32,6 @@ var g struct {
 	currenttime float64     // simulated time since start
 	blocks      []block_t   // indexed by blockid, ordered by oldest first
 	miners      []miner_t   // one per miner (unordered)
-	bestblockid int64       // tip has a max height (may not be unique)
 	eventlist   eventlist_t // priority queue, lowest timestamp first
 
 	// Implementation detail simulator state:
@@ -59,33 +58,33 @@ type (
 		name     string
 		index    int      // in miner[]
 		hashrate float64  // how much hashing power this miner has
-		mined    int      // how many blocks we've mined total (including reorg)
-		credit   int      // how many blocks we've mined we get credit for
+		mined    int      // how many total blocks we've mined (including reorg)
+		credit   int      // how many best-chain blocks we've mined
 		peer     []peer_t // outbound peers (we forward blocks to these miners)
 		current  int64    // the blockid we're trying to mine onto, initially 1
 	}
 
-	// The only event is the arrival of a block at a miner; if the block id is
-	// negative, that means this miner mined a new block on this blockid.
+	// The only event is the arrival of a block, either mined or relayed.
 	event_t struct {
-		when    float64 // time of block arrival
 		to      int     // which miner gets the block
-		blockid int64   // >0: arriving on p2p, <0: block we're mining on
+		mining  bool    // block arrival from mining (true) or peer (false)
+		when    float64 // time of block arrival
+		blockid int64   // block being mined on (parent) or block from peer
 	}
 	eventlist_t []event_t
 )
 
 func init() {
-	// Our genesis block has height 1.
+	// Genesis block.
 	g.blocks = append(g.blocks, block_t{
 		parent: 0,
 		height: 0,
 		miner:  -1})
 	g.baseblockid = 1
 	g.tips = make(map[int64]int, 0)
-	g.bestblockid = 1
 	g.eventlist = make([]event_t, 0)
 	g.trace = func(format string, a ...interface{}) (n int, err error) {
+		// The default trace function does nothing.
 		return 0, nil
 	}
 
@@ -98,6 +97,10 @@ func init() {
 
 type trace_t func(format string, a ...interface{}) (n int, err error)
 
+func validblock(blockid int64) bool {
+	return blockid >= g.baseblockid &&
+		blockid-g.baseblockid < int64(len(g.blocks))
+}
 func getblock(blockid int64) *block_t {
 	return &g.blocks[blockid-g.baseblockid]
 }
@@ -135,8 +138,9 @@ func relay(mi int, newblockid int64) {
 	for _, p := range m.peer {
 		// TODO jitter this delay, or sometimes fail to forward?
 		heap.Push(&g.eventlist, event_t{
-			when:    g.currenttime + p.delay,
 			to:      p.miner,
+			mining:  false,
+			when:    g.currenttime + p.delay,
 			blockid: newblockid})
 	}
 }
@@ -152,11 +156,11 @@ func startMining(mi int, blockid int64) {
 	solvetime := -math.Log(1.0-rand.Float64()) *
 		g.blockinterval * g.totalhash / m.hashrate
 
-	// negative blockid means mining (not p2p)
 	heap.Push(&g.eventlist, event_t{
-		when:    g.currenttime + solvetime,
 		to:      mi,
-		blockid: -blockid})
+		mining:  true,
+		when:    g.currenttime + solvetime,
+		blockid: blockid})
 	g.trace("%.2f %s start-on %d height %d nmined %d credit %d solve %.2f\n",
 		g.currenttime, m.name, blockid, getheight(blockid),
 		m.mined, m.credit, solvetime)
@@ -242,93 +246,62 @@ func main() {
 
 	// Start all miners off mining their first blocks.
 	for mi := range g.miners {
-		// begin mining on blockid 1 (our genesis block)
+		// Begin mining on blockid 1 (our genesis block, height zero).
 		startMining(mi, 1)
 	}
 
-	for i := 0; i < g.repetitions; i++ {
-		// clean up (prune) unneeded blocks
-		if len(g.tips) == 1 {
-			for {
-				if _, ok := g.tips[g.baseblockid]; ok {
-					break
-				}
-				g.baseblockid++
-				g.blocks = g.blocks[1:]
+	// Start of main loop.
+	var rep int
+	for rep = 0; rep < g.repetitions || len(g.blocks) > 1; rep++ {
+		if len(g.tips) == 1 && len(g.blocks) > 1 {
+			// Since all miners are building on the same tip, the blocks from
+			// the tip to the base can't be reorged away, so we can remove
+			// them. But first give credit for these mined blocks.
+			newbaseblockid := g.miners[0].current
+			b := getblock(newbaseblockid)
+			for b != &g.blocks[0] {
+				g.miners[b.miner].credit++
+				b = getblock(b.parent)
 			}
+			// Clean up (prune) unneeded blocks.
+			g.blocks = []block_t{*getblock(newbaseblockid)}
+			g.baseblockid = newbaseblockid
 		}
-		event := heap.Pop(&g.eventlist).(event_t)
-		g.currenttime = event.when
-		mi := event.to
+		ev := heap.Pop(&g.eventlist).(event_t)
+		g.currenttime = ev.when
+		mi := ev.to
 		m := &g.miners[mi]
-		if event.blockid > 0 {
-			// This block is from a peer, see if it's useful
-			// (the peer has already created event.blockid).
-			if event.blockid >= g.baseblockid &&
-				getheight(m.current) < getheight(event.blockid) {
-				// incoming block is better, switch to it
-				stopMining(mi)
-				g.trace("%.2f %s received-switch-to %d\n",
-					g.currenttime, g.miners[mi].name, event.blockid)
-				relay(mi, event.blockid)
-				startMining(mi, event.blockid)
+		height := getheight(m.current)
+		if ev.mining {
+			// We mined a block (unless this is a stale event).
+			if ev.blockid != m.current {
+				// This is a stale mining event, ignore it (we should
+				// still have an active mining event outstanding).
+				continue
 			}
-			continue
+			m.mined++
+			stopMining(mi)
+			ev.blockid = g.baseblockid + int64(len(g.blocks))
+			g.trace("%.2f %s mined-newid %d height %d\n",
+				g.currenttime, g.miners[mi].name,
+				ev.blockid, height+1)
+			g.blocks = append(g.blocks, block_t{
+				parent: m.current,
+				height: height + 1,
+				miner:  mi})
+		} else {
+			// Block received from a peer.
+			if !validblock(ev.blockid) || getheight(ev.blockid) <= height {
+				// We're already mining on a block that's at least as good.
+				continue
+			}
+			// This block is better, switch to it.
+			stopMining(mi)
+			g.trace("%.2f %s received-switch-to %d\n",
+				g.currenttime, g.miners[mi].name, ev.blockid)
 		}
-		// We mined a block (unless this is a stale event)
-		event.blockid = -event.blockid
-		if event.blockid != m.current {
-			// This is a stale mining event, ignore it (we should
-			// still have an active event outstanding).
-			continue
-		}
-		m.mined++
-		stopMining(mi)
-		newblockid := g.baseblockid + int64(len(g.blocks))
-		g.trace("%.2f %s mined-newid %d height %d\n",
-			g.currenttime, g.miners[mi].name,
-			newblockid, getheight(m.current)+1)
-		g.blocks = append(g.blocks, block_t{
-			parent: m.current,
-			height: getheight(m.current) + 1,
-			miner:  mi})
-		relay(mi, newblockid)
-		prev := m.current
-		startMining(mi, newblockid)
-		if prev == g.bestblockid {
-			// We're extending the best chain.
-			g.trace("%.2f %s extend %d\n",
-				g.currenttime, g.miners[mi].name, prev)
-			g.bestblockid = m.current
-			m.credit++
-			continue
-		}
-		if getheight(m.current) <= getheight(g.bestblockid) {
-			// We're mining on a non-best branch.
-			g.trace("%.2f %s nonbest %d\n",
-				g.currenttime, g.miners[mi].name, prev)
-			continue
-		}
-		// The current chain now has one more block than what was
-		// the best chain (reorg), adjust credits.
-		g.trace("%.2f %s reorg %d %d\n",
-			g.currenttime, g.miners[mi].name, g.bestblockid, m.current)
-		m.credit++
-		dec := g.bestblockid // decrement credits on this branch
-		inc := prev          // increment credits on this branch
-		for dec != inc {
-			db := getblock(dec)
-			ib := getblock(inc)
-			g.miners[db.miner].credit--
-			g.miners[ib.miner].credit++
-			g.trace("%.2f reorg height %d dec %s %d inc %s %d\n",
-				g.currenttime, db.height,
-				g.miners[db.miner].name, g.miners[db.miner].credit,
-				g.miners[ib.miner].name, g.miners[ib.miner].credit)
-			dec = db.parent
-			inc = ib.parent
-		}
-		g.bestblockid = m.current
+		relay(mi, ev.blockid)
+		startMining(mi, ev.blockid)
 	}
 	var totalblocks int
 	var minedblocks int
@@ -355,7 +328,8 @@ func main() {
 	fmt.Printf("total-stale %d\n",
 		totalstale)
 	fmt.Printf("baseblockid %d\n", g.baseblockid)
-	fmt.Printf("repetitions %d\n", g.repetitions)
+	fmt.Printf("repetitions-arg %d\n", g.repetitions)
+	fmt.Printf("repetitions %d\n", rep)
 	for _, m := range g.miners {
 		fmt.Printf("miner %s hashrate-arg %.2f %.2f%% ", m.name,
 			m.hashrate, m.hashrate*100/g.totalhash)
