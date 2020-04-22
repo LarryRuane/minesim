@@ -104,44 +104,47 @@ At the end of the run, the simulator shows various statistics, for example:
 $ go run minesim.go -i 75 -r 1000000
 seed-arg 0
 block-interval-arg 75.00
-mined-blocks 77822
-height 76937 98.86%
-total-simtime 5837580.96
-ave-block-time 75.87
+mined-blocks 112441
+height 111139 98.84%
+total-simtime 8453695.57
+ave-block-time 76.06
 total-hashrate-arg 3450.00
-total-stale 885
-baseblockid 77818
+total-stale 1302
+baseblockid 112434
 repetitions-arg 1000000
-repetitions 1000000
-miner china-asic hashrate-arg 500.00 14.49% blocks 14.15% stale 4.65%
-miner china-gpu hashrate-arg 80.00 2.32% blocks 2.21% stale 4.87%
-miner china-gateway hashrate-arg 20.00 0.58% blocks 0.54% stale 2.79%
-miner iceland-gw hashrate-arg 800.00 23.19% blocks 23.36% stale 0.53%
-miner iceland2 hashrate-arg 2050.00 59.42% blocks 59.73% stale 0.34%
+repetitions 1000004
+miner china-asic hashrate-arg 500.00 14.49% blocks 14.03% stale 4.77%
+miner china-gpu hashrate-arg 80.00 2.32% blocks 2.19% stale 4.99%
+miner china-gateway hashrate-arg 20.00 0.58% blocks 0.55% stale 3.48%
+miner iceland-gw hashrate-arg 800.00 23.19% blocks 23.33% stale 0.56%
+miner iceland2 hashrate-arg 2050.00 59.42% blocks 59.89% stale 0.34%
 ```
 
 (The `*-arg` values are arguments to the simulation, not computed
-values.) The simulation created a blockchain with 76937 blocks (height),
-which was 98.86% of all blocks mined (77822). The difference is the number
-of orphan blocks (885). The miner `china-gpu` had the highest orphan rate:
-4.87% of the blocks it mined ended up being reorged away. Hashrate
-and network topology affect these orphan rates.
+values.) The simulation created a blockchain with 111139 blocks (height),
+which was 98.84% of all blocks mined (112441). The difference is the
+number of stale (orphan) blocks (1302). The miner `china-gpu` had
+the highest orphan rate: 4.99% of the blocks it mined ended up being
+reorged away. Individual miner hashrate and network topology affect
+these orphan rates.
 
-The average block time was 75.87 seconds, which differs from the requested
-due to orphaned blocks -- the higher the orphan rate, the greater the
-average block time will be because some of the hash power is wasted. (The
-time can differ from the expected also due to random variations.)
+The average block time was 76.06 seconds, which, in the simulator,
+is greater than the requested block interval due to orphaned blocks.
+The higher the orphan rate, the greater the average block time because
+some of the hash power is wasted. (The time can differ from expected
+also due to random variations.) In the real world, difficulty adjustment
+keeps the block interval close to the desired value. (This simulator
+doesn't include difficulty adjustment.)
 
-Miner `china-gpu` had the lowest hash power, 2.32%, and mined only
-2.21% of the blocks, which is about 5% less than its hashrate fraction.
-It had the dubious distinction of having the highest fraction of blocks
-it mined turning out to be stale, 4.87%. It was at a disadvange because
-its hashrate was low and it's "far" from most of the mining power in
-Iceland, especially due to its network messages having to go through
-`china-gateway`.
+Miner `china-gpu` was configured with the lowest hash power, 2.32%, and
+mined only 2.19% of the blocks, which is about 6% less than its hashrate
+fraction. It had the highest fraction of blocks it mined turning out
+to be stale, 4.99%. It was at a disadvange because its hashrate was low
+and it's "far" from most of the mining power in Iceland, especially due
+to its network block relay messages having to go through `china-gateway`.
 
 Miner `iceland2` did the best, having achieved superlinear rewards,
-getting credit for 59.73% of blocks with only 59.42% of the
+getting credit for 59.89% of blocks with "only" 59.42% of the
 hashrate. That's because of its high hashrate and its close proximity
 to another strong miner, `iceland-gw`.
 

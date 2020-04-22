@@ -136,12 +136,16 @@ func stopMining(mi int) {
 func relay(mi int, newblockid int64) {
 	m := &g.miners[mi]
 	for _, p := range m.peer {
-		// TODO jitter this delay, or sometimes fail to forward?
-		heap.Push(&g.eventlist, event_t{
-			to:      p.miner,
-			mining:  false,
-			when:    g.currenttime + p.delay,
-			blockid: newblockid})
+		// Improve simulator efficiency by not relaying blocks
+		// that are certain to be ignored.
+		if getheight(g.miners[p.miner].current) < getheight(newblockid) {
+			// TODO jitter this delay, or sometimes fail to forward?
+			heap.Push(&g.eventlist, event_t{
+				to:      p.miner,
+				mining:  false,
+				when:    g.currenttime + p.delay,
+				blockid: newblockid})
+		}
 	}
 }
 
