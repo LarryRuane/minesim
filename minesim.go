@@ -48,7 +48,6 @@ type (
 		parent int64 // first block is the only block with parent = zero
 		height int   // more than one block can have the same height
 		miner  int   // which miner found this block
-		best   bool  // at least at one time, this block had highest height
 	}
 
 	// The set of miners and their peers is static (at least for now).
@@ -129,42 +128,6 @@ func stopMining(mi int) {
 	g.tips[m.current]--
 	if g.tips[m.current] == 0 {
 		delete(g.tips, m.current)
-		b := getblock(m.current)
-		if !b.best {
-			return
-		}
-		// No one remains mining on this block, and it's guaranteed no one
-		// ever will, so see if this was reorg.
-		maxreorg := 0
-		for blockid := range g.tips {
-			t := getblock(blockid)
-			if !t.best {
-				continue
-			}
-			if t.height <= b.height {
-				continue
-			}
-			for t.height > b.height {
-				t = getblock(t.parent)
-			}
-			// Count blocks until these branches meet.
-			reorg := 0
-			for t != b {
-				reorg++
-				t = getblock(t.parent)
-				b = getblock(b.parent)
-			}
-			if maxreorg < reorg {
-				maxreorg = reorg
-			}
-		}
-		if g.maxreorg < maxreorg {
-			g.maxreorg = maxreorg
-		}
-		if maxreorg > 0 {
-			g.trace("%.3f %s reorg %d maxreorg %d\n",
-				g.currenttime, m.name, maxreorg, g.maxreorg)
-		}
 	}
 }
 
@@ -230,8 +193,8 @@ func main() {
 	i := 0
 	scan := bufio.NewScanner(networkfile)
 	for scan.Scan() { // each line
-		// Each line is a hashrate, then a list of pairs of
-		// client id and delay (time to send to that client)
+		// Each line is a miner name, hashrate, then a list of pairs of
+		// peer name and delay (time to send to that peer)
 		fields := strings.Fields(scan.Text())
 		if len(fields) == 0 {
 			continue
@@ -246,6 +209,10 @@ func main() {
 		minerMap[fields[0]] = fields[1:]
 		minerIndex[fields[0]] = i
 		i++
+	}
+	if len(minerMap) == 0 {
+		fmt.Fprintln(os.Stderr, "no miners")
+		os.Exit(1)
 	}
 
 	// Set up (static) set of miners.
@@ -267,7 +234,7 @@ func main() {
 		m.index = minerIndex[k]
 		v = v[1:]
 		if (len(v) % 2) > 0 {
-			fmt.Fprintln(os.Stderr, "bad client delay pairs:", k, v)
+			fmt.Fprintln(os.Stderr, "bad peer delay pairs:", k, v)
 			os.Exit(1)
 		}
 		for len(v) > 0 {
@@ -293,12 +260,11 @@ func main() {
 	}
 
 	// Start of main loop.
-	var rep int
-	for rep = 0; rep < g.repetitions || len(g.blocks) > 1; rep++ {
+	for rep := 0; rep < g.repetitions; rep++ {
 		if len(g.tips) == 1 && len(g.blocks) > 1 {
 			// Since all miners are building on the same tip, the blocks from
 			// the tip to the base can't be reorged away, so we can remove
-			// them. But first give credit for these mined blocks.
+			// them, but give credit for these mined blocks as we do.
 			newbaseblockid := g.miners[0].current
 			b := getblock(newbaseblockid)
 			for b != &g.blocks[0] {
@@ -325,31 +291,42 @@ func main() {
 			stopMining(mi)
 			ev.blockid = g.baseblockid + int64(len(g.blocks))
 			height++
-			best := true
-			for blockid := range g.tips {
-				if getblock(blockid).height >= height {
-					best = false
-					break
-				}
-			}
 			g.blocks = append(g.blocks, block_t{
 				parent: m.current,
 				height: height,
-				best:   best,
 				miner:  mi})
-			g.trace("%.3f %s mined-newid %d height %d best %t\n",
-				g.currenttime, g.miners[mi].name,
-				ev.blockid, height, best)
+			g.trace("%.3f %s mined-newid %d on %d height %d\n",
+				g.currenttime, m.name, ev.blockid, m.current, height)
 		} else {
 			// Block received from a peer.
 			if !validblock(ev.blockid) || getheight(ev.blockid) <= height {
 				// We're already mining on a block that's at least as good.
 				continue
 			}
-			// This block is better, switch to it.
-			stopMining(mi)
+			// This block is better, switch to it, first compute reorg depth.
 			g.trace("%.3f %s received-switch-to %d\n",
-				g.currenttime, g.miners[mi].name, ev.blockid)
+				g.currenttime, m.name, ev.blockid)
+			c := getblock(m.current)  // current block we're mining on
+			t := getblock(ev.blockid) // to block (switching to)
+			// Move back on the "to" (better) chain until even with current.
+			for t.height > c.height {
+				t = getblock(t.parent)
+			}
+			// From the same height, count blocks until these branches meet.
+			reorg := 0
+			for t != c {
+				reorg++
+				t = getblock(t.parent)
+				c = getblock(c.parent)
+			}
+			if reorg > 0 {
+				g.trace("%.3f %s reorg %d maxreorg %d\n",
+					g.currenttime, m.name, reorg, g.maxreorg)
+			}
+			if g.maxreorg < reorg {
+				g.maxreorg = reorg
+			}
+			stopMining(mi)
 		}
 		relay(mi, ev.blockid)
 		startMining(mi, ev.blockid)
@@ -381,7 +358,6 @@ func main() {
 	fmt.Printf("max-reorg-depth %d\n", g.maxreorg)
 	fmt.Printf("baseblockid %d\n", g.baseblockid)
 	fmt.Printf("repetitions-arg %d\n", g.repetitions)
-	fmt.Printf("repetitions %d\n", rep)
 	for _, m := range g.miners {
 		fmt.Printf("miner %s hashrate-arg %.2f %.2f%% ", m.name,
 			m.hashrate, m.hashrate*100/g.totalhash)

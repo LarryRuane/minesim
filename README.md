@@ -5,15 +5,23 @@ This program simulates a POW mining network, such as Zcash or Bitcoin
 
 ## License
 
-This software is released under the terms of the MIT license, see https://opensource.org/licenses/MIT.
+This software is released under the terms of the MIT license,
+see https://opensource.org/licenses/MIT.
 
 ### Introduction
 
 Like any simulator, it abstracts away a huge amount of
 stuff (if it didn't, it wouldn't be a simulator, it would be the thing
 itself). It's a single executable written in Go. It can simulate the
-generation of many thousands of blocks per second of real CPU time. It
-simulates:
+generation of many thousands of blocks per second of real CPU time. 
+
+The purpose of this simulator is to investigate how block relay
+delays (network messages and block verification) can cause miners
+to not be mining on the best chain, as discussed in this Chaincode
+podcast episode:
+https://podcast.chaincode.com/2020/03/12/matt-corallo-6.html
+
+It simulates:
 
 - the passage of time; the units of time are arbitrary (but seconds seems to work well)
 - random block discovery (mining) according to (realistic) Poisson distribution
@@ -106,14 +114,13 @@ seed-arg 0
 block-interval-arg 75.00
 mined-blocks 112441
 height 111139 98.84%
-total-simtime 8453695.57
+total-simtime 8453680.15
 ave-block-time 76.06
 total-hashrate-arg 3450.00
-total-stale 1302
+total-stale 1303
 max-reorg-depth 3
-baseblockid 112434
+baseblockid 112433
 repetitions-arg 1000000
-repetitions 1000004
 miner china-asic hashrate-arg 500.00 14.49% blocks 14.03% stale 4.77%
 miner china-gpu hashrate-arg 80.00 2.32% blocks 2.19% stale 4.99%
 miner china-gateway hashrate-arg 20.00 0.58% blocks 0.55% stale 3.48%
@@ -149,7 +156,7 @@ getting credit for 59.89% of blocks with "only" 59.42% of the
 hashrate. That's because of its high hashrate and its close proximity
 to another strong miner, `iceland-gw`.
 
-### Block-interval simulators
+### Block-interval sample time generators
 
 This repository also includes two simple Python programs to generate
 simulated block intervals based on the Poisson distribution. They have
