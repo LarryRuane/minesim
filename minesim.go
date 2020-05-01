@@ -29,61 +29,61 @@ var g struct {
 	seed          int64   // random number seed, -1 means use wall-clock
 
 	// Main simulator state:
-	currenttime float64     // simulated time since start
-	blocks      []block_t   // indexed by blockid, ordered by oldest first
-	miners      []miner_t   // one per miner (unordered)
-	eventlist   eventlist_t // priority queue, lowest timestamp first
+	currenttime float64   // simulated time since start
+	blocks      []block   // indexed by blockid, ordered by oldest first
+	miners      []miner   // one per miner (unordered)
+	eventlist   eventlist // priority queue, lowest timestamp first
 
 	// Implementation detail simulator state:
 	baseblockid int64         // blocks[0] corresponds to this block id
 	tips        map[int64]int // actively being mined on, for pruning
 	r           *rand.Rand    // for block interval calculation
 	maxreorg    int           // greatest depth reorg
-	trace       trace_t       // show details of each sim step
+	trace       traceFunc     // show details of each sim step
 	totalhash   float64       // sum of miners' hashrates
 }
 
 type (
-	block_t struct {
+	block struct {
 		parent int64 // first block is the only block with parent = zero
 		height int   // more than one block can have the same height
 		miner  int   // which miner found this block
 	}
 
 	// The set of miners and their peers is static (at least for now).
-	peer_t struct {
+	peer struct {
 		miner int
 		delay float64
 	}
-	miner_t struct {
+	miner struct {
 		name     string
-		index    int      // in miner[]
-		hashrate float64  // how much hashing power this miner has
-		mined    int      // how many total blocks we've mined (including reorg)
-		credit   int      // how many best-chain blocks we've mined
-		peer     []peer_t // outbound peers (we forward blocks to these miners)
-		current  int64    // the blockid we're trying to mine onto, initially 1
+		index    int     // in miner[]
+		hashrate float64 // how much hashing power this miner has
+		mined    int     // how many total blocks we've mined (including reorg)
+		credit   int     // how many best-chain blocks we've mined
+		peer     []peer  // outbound peers (we forward blocks to these miners)
+		current  int64   // the blockid we're trying to mine onto, initially 1
 	}
 
 	// The only event is the arrival of a block, either mined or relayed.
-	event_t struct {
+	event struct {
 		to      int     // which miner gets the block
 		mining  bool    // block arrival from mining (true) or peer (false)
 		when    float64 // time of block arrival
 		blockid int64   // block being mined on (parent) or block from peer
 	}
-	eventlist_t []event_t
+	eventlist []event
 )
 
 func init() {
 	// Genesis block.
-	g.blocks = append(g.blocks, block_t{
+	g.blocks = append(g.blocks, block{
 		parent: 0,
 		height: 0,
 		miner:  -1})
 	g.baseblockid = 1
 	g.tips = make(map[int64]int, 0)
-	g.eventlist = make([]event_t, 0)
+	g.eventlist = make([]event, 0)
 	g.trace = func(format string, a ...interface{}) (n int, err error) {
 		// The default trace function does nothing.
 		return 0, nil
@@ -91,31 +91,32 @@ func init() {
 
 	flag.StringVar(&g.network, "f", "./network", "network topology file")
 	flag.Float64Var(&g.blockinterval, "i", 300, "average block interval")
-	flag.IntVar(&g.repetitions, "r", 20, "number of simulation steps")
+	flag.IntVar(&g.repetitions, "r", 1_000_000, "number of simulation steps")
 	flag.BoolVar(&g.traceenable, "t", false, "print execution trace to stdout")
 	flag.Int64Var(&g.seed, "s", 0, "random number seed, -1 to use wall-clock")
 }
 
-type trace_t func(format string, a ...interface{}) (n int, err error)
+type traceFunc func(format string, a ...interface{}) (n int, err error)
 
 func validblock(blockid int64) bool {
 	return blockid >= g.baseblockid &&
 		blockid-g.baseblockid < int64(len(g.blocks))
 }
-func getblock(blockid int64) *block_t {
+func getblock(blockid int64) *block {
 	return &g.blocks[blockid-g.baseblockid]
 }
 func getheight(blockid int64) int {
 	return g.blocks[blockid-g.baseblockid].height
 }
 
-func (e eventlist_t) Len() int           { return len(e) }
-func (e eventlist_t) Less(i, j int) bool { return e[i].when < e[j].when }
-func (e eventlist_t) Swap(i, j int)      { e[i], e[j] = e[j], e[i] }
-func (e *eventlist_t) Push(x interface{}) {
-	*e = append(*e, x.(event_t))
+// Helper functions for the eventlist heap (priority queue)
+func (e eventlist) Len() int           { return len(e) }
+func (e eventlist) Less(i, j int) bool { return e[i].when < e[j].when }
+func (e eventlist) Swap(i, j int)      { e[i], e[j] = e[j], e[i] }
+func (e *eventlist) Push(x interface{}) {
+	*e = append(*e, x.(event))
 }
-func (e *eventlist_t) Pop() interface{} {
+func (e *eventlist) Pop() interface{} {
 	old := *e
 	n := len(old)
 	x := old[n-1]
@@ -141,7 +142,7 @@ func relay(mi int, newblockid int64) {
 		// that are certain to be ignored.
 		if getheight(g.miners[p.miner].current) < getheight(newblockid) {
 			// TODO jitter this delay, or sometimes fail to forward?
-			heap.Push(&g.eventlist, event_t{
+			heap.Push(&g.eventlist, event{
 				to:      p.miner,
 				mining:  false,
 				when:    g.currenttime + p.delay,
@@ -161,7 +162,7 @@ func startMining(mi int, blockid int64) {
 	solvetime := -math.Log(1.0-rand.Float64()) *
 		g.blockinterval * g.totalhash / m.hashrate
 
-	heap.Push(&g.eventlist, event_t{
+	heap.Push(&g.eventlist, event{
 		to:      mi,
 		mining:  true,
 		when:    g.currenttime + solvetime,
@@ -216,7 +217,7 @@ func main() {
 	}
 
 	// Set up (static) set of miners.
-	g.miners = make([]miner_t, i)
+	g.miners = make([]miner, i)
 	for k, v := range minerMap {
 		// v is a slice of whitespace-separated tokens (on a line)
 		hr, err := strconv.ParseFloat(v[0], 64)
@@ -229,7 +230,7 @@ func main() {
 			os.Exit(1)
 		}
 		g.totalhash += hr
-		m := miner_t{hashrate: hr}
+		m := miner{hashrate: hr}
 		m.name = k
 		m.index = minerIndex[k]
 		v = v[1:]
@@ -247,7 +248,7 @@ func main() {
 				fmt.Fprintln(os.Stderr, "bad delay:", v[1], err)
 				os.Exit(1)
 			}
-			m.peer = append(m.peer, peer_t{minerIndex[v[0]], delay})
+			m.peer = append(m.peer, peer{minerIndex[v[0]], delay})
 			v = v[2:]
 		}
 		g.miners[m.index] = m
@@ -272,10 +273,10 @@ func main() {
 				b = getblock(b.parent)
 			}
 			// Clean up (prune) unneeded blocks.
-			g.blocks = []block_t{*getblock(newbaseblockid)}
+			g.blocks = []block{*getblock(newbaseblockid)}
 			g.baseblockid = newbaseblockid
 		}
-		ev := heap.Pop(&g.eventlist).(event_t)
+		ev := heap.Pop(&g.eventlist).(event)
 		g.currenttime = ev.when
 		mi := ev.to
 		m := &g.miners[mi]
@@ -291,14 +292,14 @@ func main() {
 			stopMining(mi)
 			ev.blockid = g.baseblockid + int64(len(g.blocks))
 			height++
-			g.blocks = append(g.blocks, block_t{
+			g.blocks = append(g.blocks, block{
 				parent: m.current,
 				height: height,
 				miner:  mi})
 			g.trace("%.3f %s mined-newid %d on %d height %d\n",
 				g.currenttime, m.name, ev.blockid, m.current, height)
 		} else {
-			// Block received from a peer.
+			// Block received from a peer (but could be a stale message).
 			if !validblock(ev.blockid) || getheight(ev.blockid) <= height {
 				// We're already mining on a block that's at least as good.
 				continue
