@@ -81,7 +81,7 @@ func init() {
 		parent: 0,
 		height: 0,
 		miner:  -1})
-	g.baseblockid = 1
+	g.baseblockid = 1000
 	g.tips = make(map[int64]int, 0)
 	g.eventlist = make([]event, 0)
 	g.trace = func(format string, a ...interface{}) (n int, err error) {
@@ -257,7 +257,7 @@ func main() {
 	// Start all miners off mining their first blocks.
 	for mi := range g.miners {
 		// Begin mining on blockid 1 (our genesis block, height zero).
-		startMining(mi, 1)
+		startMining(mi, g.baseblockid)
 	}
 
 	// Start of main loop.
