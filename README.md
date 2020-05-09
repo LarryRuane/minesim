@@ -17,9 +17,10 @@ generation of many thousands of blocks per second of real CPU time.
 
 The purpose of this simulator is to investigate how block relay
 delays (network messages and block verification) can cause miners
-to not be mining on the best chain, as discussed in this Chaincode
-podcast episode:
-https://podcast.chaincode.com/2020/03/12/matt-corallo-6.html
+to not be mining on the best chain, as discussed here:
+
+- https://podcast.chaincode.com/2020/03/12/matt-corallo-6.html
+- https://youtu.be/RguZ0_nmSPw?t=752
 
 It simulates:
 
@@ -155,6 +156,20 @@ Miner `iceland2` did the best, having achieved superlinear rewards,
 getting credit for 59.89% of blocks with "only" 59.42% of the
 hashrate. That's because of its high hashrate and its close proximity
 to another strong miner, `iceland-gw`.
+
+### Motivations for writing this simulator
+
+This simulator hopes to make cryptocurrency developers aware of the
+dangers of reducing block interval or increasing block size. Doing
+either of these increases the "gravitational pull" that miners and
+pools experience to be near other centers of high hashrate. In physics,
+gravity is a weak force -- many other forces can overcome it -- but
+it a force. Mining is an extremely competitive industry with low
+barriers to entry and razor-thin profit margins, so if a miner or a
+mining pool can physically locate near other miners, its 2 percent
+profit may double! Geographic centralization makes attacking the
+network easier by, for example, governments, who can shut down a
+large fraction of mining power that is within their jurisdiction.
 
 ### Block-interval sample time generators
 

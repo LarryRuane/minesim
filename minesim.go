@@ -81,7 +81,7 @@ func init() {
 		parent: 0,
 		height: 0,
 		miner:  -1})
-	g.baseblockid = 1000
+	g.baseblockid = 1000 // arbitrary but helps distinguish ids from heights
 	g.tips = make(map[int64]int, 0)
 	g.eventlist = make([]event, 0)
 	g.trace = func(format string, a ...interface{}) (n int, err error) {
