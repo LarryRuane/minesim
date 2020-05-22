@@ -8,16 +8,16 @@ This program simulates a POW mining network, such as Zcash or Bitcoin
 This software is released under the terms of the MIT license,
 see https://opensource.org/licenses/MIT.
 
-### Introduction
+## Introduction
 
-Like any simulator, it abstracts away a huge amount of
-stuff (if it didn't, it wouldn't be a simulator, it would be the thing
-itself). It's a single executable written in Go. It can simulate the
-generation of many thousands of blocks per second of real CPU time. 
+Like any simulator, this one abstracts away a huge amount of stuff (if it
+didn't, it wouldn't be a simulator, it would be the thing itself). It's
+a single executable written in Go. It can simulate the generation of
+many thousands of blocks per second of real CPU time.
 
-The purpose of this simulator is to investigate how block relay
-delays (network messages and block verification) can cause miners
-to not be mining on the best chain, as discussed here:
+The purpose of this simulator is to investigate how block relay delays
+(network messages and block verification) can cause miners to not be
+mining on the best chain, as discussed here:
 
 - https://podcast.chaincode.com/2020/03/12/matt-corallo-6.html
 - https://youtu.be/RguZ0_nmSPw?t=752
@@ -45,7 +45,7 @@ It does not simulate:
 - network message loss, network partitions, sybil or eclipse attacks
 - randomly-varying message latencies (this wouldn't be hard to do)
 
-### Configuration file
+## Configuration file
 
 The configuration file consists of one line per miner with
 whitespace-separated tokens, specifying
@@ -63,7 +63,7 @@ Peer specifications are one-way: If miner A lists miner B as a peer,
 A sends to B but that doesn't allow B to send to A;
 that must be specified explicitly.
 
-### Building, running, and startup
+## Building, running, and startup
 
 To build: `go build minesim.go`
 
@@ -76,7 +76,7 @@ Available options (`./minesim -help`):
 - `-i` (floating point) Interval -- the average block interval, units are arbitrary but usually interpreted as seconds
 - `-s` (integer) Seed -- for the random number generator; default is 0; specify -1 to use wall-clock time
 
-### Block relay
+## Block relay
 
 The only type of message that peers send to each other is
 block-forwarding. There are two sources of knowledge of a new block
@@ -105,7 +105,37 @@ The `-i` interval argument simulates the given block time, but it may end
 up greater because of losses due to chain splits (mined blocks that end
 up being orphaned).
 
-### Results
+## Default configuration
+
+The file `network` (included in the repo) has the default configuration:
+
+```
+$ cat network 
+# two groups of miners far apart (the times must include block verification)
+china-asic     500    china-gateway 0.5
+china-gpu       80    china-gateway 0.5
+china-gateway   20    china-asic 0.5      china-gpu 0.5  iceland-gw 2
+
+iceland-gw     800    china-gateway 2     iceland2 0.5
+iceland2      2050    iceland-gw 0.5
+$
+```
+
+This is a trivial and unrealistic configuration, but illustrates the
+concepts. Each line described a miner (empty lines or those beginning with
+`#` are ignored) and consists of whitespace-separated tokens. The first
+token is the name of the miner, the second is its relative hashrate. The
+remainder of the line consists of pairs of peer and latency to send
+to that peer. Again, the time units are arbitrary, but seconds works
+well. Two-way peer communication paths must be configured explicitly.
+
+This configuration imagines a mining centers in China and Iceland,
+and the block relay times are much less within each center than between
+centers. This is highly arbitrary and made-up; it would be interesting to
+create a configuration file that matches the real network. (The simulator
+can scale well; it's reasonable to configure many thousands of miners.)
+
+## Results
 
 At the end of the run, the simulator shows various statistics, for example:
 
@@ -157,7 +187,7 @@ getting credit for 59.89% of blocks with "only" 59.42% of the
 hashrate. That's because of its high hashrate and its close proximity
 to another strong miner, `iceland-gw`.
 
-### Motivations for writing this simulator
+## Motivations for writing this simulator
 
 This simulator hopes to make cryptocurrency developers aware of the
 dangers of reducing block interval or increasing block size. Doing
@@ -171,7 +201,63 @@ profit may double! Geographic centralization makes attacking the
 network easier by, for example, governments, who can shut down a
 large fraction of mining power that is within their jurisdiction.
 
-### Block-interval sample time generators
+## Trace output
+
+Specifying `-t` (enable tracing) on the command line causes the simulator
+to print a line for each execution step, and it's fun to see these
+details. Here's the beginning of the output using the default arguments:
+
+
+```
+$ go run minesim.go -t
+0.000 china-asic start-on 1000 height 0 mined 0 credit 0 solve 1920.98
+0.000 china-gpu start-on 1000 height 0 mined 0 credit 0 solve 36508.74
+0.000 china-gateway start-on 1000 height 0 mined 0 credit 0 solve 56527.16
+0.000 iceland-gw start-on 1000 height 0 mined 0 credit 0 solve 744.87
+0.000 iceland2 start-on 1000 height 0 mined 0 credit 0 solve 279.07
+279.074 iceland2 mined-newid 1001 on 1000 height 1
+279.074 iceland2 start-on 1001 height 1 mined 1 credit 0 solve 586.16
+279.574 iceland-gw received-switch-to 1001
+279.574 iceland-gw start-on 1001 height 1 mined 0 credit 0 solve 87.83
+281.574 china-gateway received-switch-to 1001
+281.574 china-gateway start-on 1001 height 1 mined 0 credit 0 solve 8808.79
+282.074 china-asic received-switch-to 1001
+282.074 china-asic start-on 1001 height 1 mined 0 credit 0 solve 211.14
+282.074 china-gpu received-switch-to 1001
+282.074 china-gpu start-on 1001 height 1 mined 0 credit 0 solve 4631.35
+367.407 iceland-gw mined-newid 1002 on 1001 height 2
+367.407 iceland-gw start-on 1002 height 2 mined 1 credit 0 solve 936.73
+367.907 iceland2 received-switch-to 1002
+367.907 iceland2 start-on 1002 height 2 mined 1 credit 1 solve 848.23
+...
+```
+
+The first column is the simulated time. At time zero, all five miners
+start mining on top of block ID 1000 (which is the arbitrary ID of the
+"genesis block") which has height 0. So far, each miner has mined zero
+blocks and received credit for zero blocks. (A credit is received when
+it's certain that a block will be part of the final blockchain.) The
+number following `solve` is the time it will take for this miner to
+solve the next block (according to the random Poisson distribution).
+
+At time 279.074, the miner `iceland2` solves the first block which
+gets the next ID (1001, the IDs just increment on each mined block;
+IDs are globally unique). `iceland2` begins mining on top of that block
+(`start-on 1001`). It also relays the new block to the other miners.
+Its only peer is `iceland-gw`, which receives the block at 279.574
+(500 milliseconds later). This miner determines that this new block
+is better than the one it's currently mining on so it switches to it
+(`received-switch-to 1001`) and begins mining on it (`start-on 1001`). It
+also forwards the block to its peers; this is how `china-gw` receives
+it at 281.574 (2 seconds later), and it switches to it and relays it.
+
+Searching this trace output for `reorg` is interesting; this shows
+cases where a miner discovers that a better block that requires it to
+back up _more_ than one block to get on the best chain. As expected,
+as block relay times increase or the average block interval decreases
+in the configuration, deeper reorgs occur.
+
+## Block-interval sample time generators
 
 This repository also includes two simple Python programs to generate
 simulated block intervals based on the Poisson distribution. They have
