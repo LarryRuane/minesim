@@ -194,7 +194,7 @@ dangers of reducing block interval or increasing block size. Doing
 either of these increases the "gravitational pull" that miners and
 pools experience to be near other centers of high hashrate. In physics,
 gravity is a weak force -- many other forces can overcome it -- but
-it a force. Mining is an extremely competitive industry with low
+it is a force. Mining is an extremely competitive industry with low
 barriers to entry and razor-thin profit margins, so if a miner or a
 mining pool can physically locate near other miners, its 2 percent
 profit may double! Geographic centralization makes attacking the
