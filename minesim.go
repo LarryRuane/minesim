@@ -69,10 +69,10 @@ type (
 
 	// The only event is the arrival of a block, either mined or relayed.
 	event struct {
-		to      int     // which miner gets the block
-		mining  bool    // block arrival from mining (true) or peer (false)
-		when    float64 // time of block arrival
-		blockid blockid // block being mined on (parent) or block from peer
+		to     int     // which miner gets the block
+		mining bool    // block arrival from mining (true) or peer (false)
+		when   float64 // time of block arrival
+		bid    blockid // block being mined on (parent) or block from peer
 	}
 	eventlist []event
 )
@@ -100,15 +100,15 @@ func init() {
 
 type traceFunc func(format string, a ...interface{}) (n int, err error)
 
-func validblock(blockid blockid) bool {
-	return blockid >= g.baseblockid &&
-		int(blockid-g.baseblockid) < len(g.blocks)
+func validblock(bid blockid) bool {
+	return bid >= g.baseblockid &&
+		int(bid-g.baseblockid) < len(g.blocks)
 }
-func getblock(blockid blockid) *block {
-	return &g.blocks[blockid-g.baseblockid]
+func getblock(bid blockid) *block {
+	return &g.blocks[bid-g.baseblockid]
 }
-func getheight(blockid blockid) height {
-	return g.blocks[int(blockid-g.baseblockid)].height
+func getheight(bid blockid) height {
+	return g.blocks[int(bid-g.baseblockid)].height
 }
 
 // Helper functions for the eventlist heap (priority queue)
@@ -145,19 +145,19 @@ func relay(mi int, newblockid blockid) {
 		if getheight(g.miners[p.miner].tip) < getheight(newblockid) {
 			// TODO jitter this delay, or sometimes fail to forward?
 			heap.Push(&g.eventlist, event{
-				to:      p.miner,
-				mining:  false,
-				when:    g.currenttime + p.delay,
-				blockid: newblockid})
+				to:     p.miner,
+				mining: false,
+				when:   g.currenttime + p.delay,
+				bid:    newblockid})
 		}
 	}
 }
 
 // Start mining on top of the given existing block
-func startMining(mi int, blockid blockid) {
+func startMining(mi int, bid blockid) {
 	m := &g.miners[mi]
 	// We'll mine on top of blockid
-	m.tip = blockid
+	m.tip = bid
 	g.tips[m.tip]++
 
 	// Schedule an event for when our "mining" will be done.
@@ -165,12 +165,12 @@ func startMining(mi int, blockid blockid) {
 		g.blockinterval * g.totalhash / m.hashrate
 
 	heap.Push(&g.eventlist, event{
-		to:      mi,
-		mining:  true,
-		when:    g.currenttime + solvetime,
-		blockid: blockid})
+		to:     mi,
+		mining: true,
+		when:   g.currenttime + solvetime,
+		bid:    bid})
 	g.trace("%.3f %s start-on %d height %d mined %d credit %d solve %.2f\n",
-		g.currenttime, m.name, blockid, getheight(blockid),
+		g.currenttime, m.name, bid, getheight(bid),
 		m.mined, m.credit, solvetime)
 }
 
@@ -285,32 +285,32 @@ func main() {
 		height := getheight(m.tip)
 		if ev.mining {
 			// We mined a block (unless this is a stale event).
-			if ev.blockid != m.tip {
+			if ev.bid != m.tip {
 				// This is a stale mining event, ignore it (we should
 				// still have an active mining event outstanding).
 				continue
 			}
 			m.mined++
 			stopMining(mi)
-			ev.blockid = g.baseblockid + blockid(len(g.blocks))
+			ev.bid = g.baseblockid + blockid(len(g.blocks))
 			height++
 			g.blocks = append(g.blocks, block{
 				parent: m.tip,
 				height: height,
 				miner:  mi})
 			g.trace("%.3f %s mined-newid %d on %d height %d\n",
-				g.currenttime, m.name, ev.blockid, m.tip, height)
+				g.currenttime, m.name, ev.bid, m.tip, height)
 		} else {
 			// Block received from a peer (but could be a stale message).
-			if !validblock(ev.blockid) || getheight(ev.blockid) <= height {
+			if !validblock(ev.bid) || getheight(ev.bid) <= height {
 				// We're already mining on a block that's at least as good.
 				continue
 			}
 			// This block is better, switch to it, first compute reorg depth.
 			g.trace("%.3f %s received-switch-to %d\n",
-				g.currenttime, m.name, ev.blockid)
-			c := getblock(m.tip)      // current block we're mining on
-			t := getblock(ev.blockid) // to block (switching to)
+				g.currenttime, m.name, ev.bid)
+			c := getblock(m.tip)  // current block we're mining on
+			t := getblock(ev.bid) // to block (switching to)
 			// Move back on the "to" (better) chain until even with current.
 			for t.height > c.height {
 				t = getblock(t.parent)
@@ -331,8 +331,8 @@ func main() {
 			}
 			stopMining(mi)
 		}
-		relay(mi, ev.blockid)
-		startMining(mi, ev.blockid)
+		relay(mi, ev.bid)
+		startMining(mi, ev.bid)
 	}
 	var totalblocks int
 	var minedblocks int
