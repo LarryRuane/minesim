@@ -35,12 +35,11 @@ var g struct {
 	eventlist   eventlist // priority queue, lowest timestamp first
 
 	// Implementation detail simulator state:
-	baseblockid blockid         // blocks[0] corresponds to this block id
-	tips        map[blockid]int // actively being mined on, for pruning
-	r           *rand.Rand      // for block interval calculation
-	maxreorg    int             // greatest depth reorg
-	trace       traceFunc       // show details of each sim step
-	totalhash   float64         // sum of miners' hashrates
+	baseblockid blockid    // blocks[0] corresponds to this block id
+	r           *rand.Rand // for block interval calculation
+	maxreorg    int        // greatest depth reorg
+	trace       traceFunc  // show details of each sim step
+	totalhash   float64    // sum of miners' hashrates
 }
 
 type (
@@ -84,7 +83,6 @@ func init() {
 		height: 0,
 		miner:  -1})
 	g.baseblockid = 1000 // arbitrary but helps distinguish ids from heights
-	g.tips = make(map[blockid]int, 0)
 	g.eventlist = make([]event, 0)
 	g.trace = func(format string, a ...interface{}) (n int, err error) {
 		// The default trace function does nothing.
@@ -126,14 +124,6 @@ func (e *eventlist) Pop() interface{} {
 	return x
 }
 
-func stopMining(mi int) {
-	m := &g.miners[mi]
-	g.tips[m.tip]--
-	if g.tips[m.tip] == 0 {
-		delete(g.tips, m.tip)
-	}
-}
-
 // Relay a newly-discovered block (either mined or relayed to us) to our peers.
 // This sends a message to the peer we received the block from (if it's one
 // of our peers), but that's okay, it will be ignored.
@@ -158,7 +148,6 @@ func startMining(mi int, bid blockid) {
 	m := &g.miners[mi]
 	// We'll mine on top of blockid
 	m.tip = bid
-	g.tips[m.tip]++
 
 	// Schedule an event for when our "mining" will be done.
 	solvetime := -math.Log(1.0-rand.Float64()) *
@@ -172,6 +161,57 @@ func startMining(mi int, bid blockid) {
 	g.trace("%.3f %s start-on %d height %d mined %d credit %d solve %.2f\n",
 		g.currenttime, m.name, bid, getheight(bid),
 		m.mined, m.credit, solvetime)
+}
+
+// Remove unneded blocks, give credits to miners.
+func cleanBlocks() {
+	// Find the minimum height that any miner is at.
+	var minheight height
+	for mi, m := range g.miners {
+		h := getheight(m.tip)
+		if mi == 0 || minheight > h {
+			minheight = h
+		}
+	}
+
+	// Move down from all tips until they're at the same (minimum) height.
+	blockAtSameHeight := make([]blockid, len(g.miners))
+	for i, m := range g.miners {
+		blockAtSameHeight[i] = m.tip
+		for getheight(blockAtSameHeight[i]) > minheight {
+			blockAtSameHeight[i] = getblock(blockAtSameHeight[i]).parent
+		}
+	}
+	// Find the block that all tips are based on (oldest branch point).
+	for {
+		// Determine if all the blockAtSameHeight[] are equal.
+		var i int
+		for i = 1; i < len(g.miners); i++ {
+			if blockAtSameHeight[i] != blockAtSameHeight[0] {
+				break
+			}
+		}
+		if i >= len(g.miners) {
+			// Yes, they are all equal.
+			break
+		}
+		// Everyone move down one and try again.
+		for i = 0; i < len(g.miners); i++ {
+			blockAtSameHeight[i] = getblock(blockAtSameHeight[i]).parent
+		}
+	}
+	newbaseblockid := blockAtSameHeight[0]
+
+	// Give credits to miners (these blocks can't be reorged away).
+	b := getblock(newbaseblockid)
+	for b != &g.blocks[0] {
+		g.miners[b.miner].credit++
+		b = getblock(b.parent)
+	}
+
+	// Remove older blocks that are no longer relevant.
+	g.blocks = g.blocks[newbaseblockid-g.baseblockid:]
+	g.baseblockid = newbaseblockid
 }
 
 func main() {
@@ -264,19 +304,8 @@ func main() {
 
 	// Start of main loop.
 	for rep := 0; rep < g.repetitions; rep++ {
-		if len(g.tips) == 1 && len(g.blocks) > 1 {
-			// Since all miners are building on the same tip, the blocks from
-			// the tip to the base can't be reorged away, so we can remove
-			// them, but give credit for these mined blocks as we do.
-			newbaseblockid := g.miners[0].tip
-			b := getblock(newbaseblockid)
-			for b != &g.blocks[0] {
-				g.miners[b.miner].credit++
-				b = getblock(b.parent)
-			}
-			// Clean up (prune) unneeded blocks.
-			g.blocks = []block{*getblock(newbaseblockid)}
-			g.baseblockid = newbaseblockid
+		if len(g.blocks) > 1000 {
+			cleanBlocks()
 		}
 		ev := heap.Pop(&g.eventlist).(event)
 		g.currenttime = ev.when
@@ -291,7 +320,6 @@ func main() {
 				continue
 			}
 			m.mined++
-			stopMining(mi)
 			ev.bid = g.baseblockid + blockid(len(g.blocks))
 			height++
 			g.blocks = append(g.blocks, block{
@@ -329,11 +357,11 @@ func main() {
 			if g.maxreorg < reorg {
 				g.maxreorg = reorg
 			}
-			stopMining(mi)
 		}
 		relay(mi, ev.bid)
 		startMining(mi, ev.bid)
 	}
+	cleanBlocks()
 	var totalblocks int
 	var minedblocks int
 	var totalstale int

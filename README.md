@@ -144,13 +144,13 @@ $ go run minesim.go -i 75 -r 1000000
 seed-arg 0
 block-interval-arg 75.00
 mined-blocks 112441
-height 111139 98.84%
-total-simtime 8453680.15
-ave-block-time 76.06
+height 111138 98.84%
+total-simtime 8453779.07
+ave-block-time 76.07
 total-hashrate-arg 3450.00
 total-stale 1303
 max-reorg-depth 3
-baseblockid 112433
+baseblockid 113440
 repetitions-arg 1000000
 miner china-asic hashrate-arg 500.00 14.49% blocks 14.03% stale 4.77%
 miner china-gpu hashrate-arg 80.00 2.32% blocks 2.19% stale 4.99%
