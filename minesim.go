@@ -35,19 +35,21 @@ var g struct {
 	eventlist   eventlist // priority queue, lowest timestamp first
 
 	// Implementation detail simulator state:
-	baseblockid int64         // blocks[0] corresponds to this block id
-	tips        map[int64]int // actively being mined on, for pruning
-	r           *rand.Rand    // for block interval calculation
-	maxreorg    int           // greatest depth reorg
-	trace       traceFunc     // show details of each sim step
-	totalhash   float64       // sum of miners' hashrates
+	baseblockid blockid         // blocks[0] corresponds to this block id
+	tips        map[blockid]int // actively being mined on, for pruning
+	r           *rand.Rand      // for block interval calculation
+	maxreorg    int             // greatest depth reorg
+	trace       traceFunc       // show details of each sim step
+	totalhash   float64         // sum of miners' hashrates
 }
 
 type (
-	block struct {
-		parent int64 // first block is the only block with parent = zero
-		height int   // more than one block can have the same height
-		miner  int   // which miner found this block
+	height  int64
+	blockid int64
+	block   struct {
+		parent blockid // first block is the only block with parent = zero
+		height height  // more than one block can have the same height
+		miner  int     // which miner found this block
 	}
 
 	// The set of miners and their peers is static (at least for now).
@@ -62,7 +64,7 @@ type (
 		mined    int     // how many total blocks we've mined (including reorg)
 		credit   int     // how many best-chain blocks we've mined
 		peer     []peer  // outbound peers (we forward blocks to these miners)
-		current  int64   // the blockid we're trying to mine onto, initially 1
+		current  blockid // the blockid we're trying to mine onto, initially 1
 	}
 
 	// The only event is the arrival of a block, either mined or relayed.
@@ -70,7 +72,7 @@ type (
 		to      int     // which miner gets the block
 		mining  bool    // block arrival from mining (true) or peer (false)
 		when    float64 // time of block arrival
-		blockid int64   // block being mined on (parent) or block from peer
+		blockid blockid // block being mined on (parent) or block from peer
 	}
 	eventlist []event
 )
@@ -82,7 +84,7 @@ func init() {
 		height: 0,
 		miner:  -1})
 	g.baseblockid = 1000 // arbitrary but helps distinguish ids from heights
-	g.tips = make(map[int64]int, 0)
+	g.tips = make(map[blockid]int, 0)
 	g.eventlist = make([]event, 0)
 	g.trace = func(format string, a ...interface{}) (n int, err error) {
 		// The default trace function does nothing.
@@ -98,15 +100,15 @@ func init() {
 
 type traceFunc func(format string, a ...interface{}) (n int, err error)
 
-func validblock(blockid int64) bool {
+func validblock(blockid blockid) bool {
 	return blockid >= g.baseblockid &&
-		blockid-g.baseblockid < int64(len(g.blocks))
+		int(blockid-g.baseblockid) < len(g.blocks)
 }
-func getblock(blockid int64) *block {
+func getblock(blockid blockid) *block {
 	return &g.blocks[blockid-g.baseblockid]
 }
-func getheight(blockid int64) int {
-	return g.blocks[blockid-g.baseblockid].height
+func getheight(blockid blockid) height {
+	return g.blocks[int(blockid-g.baseblockid)].height
 }
 
 // Helper functions for the eventlist heap (priority queue)
@@ -135,7 +137,7 @@ func stopMining(mi int) {
 // Relay a newly-discovered block (either mined or relayed to us) to our peers.
 // This sends a message to the peer we received the block from (if it's one
 // of our peers), but that's okay, it will be ignored.
-func relay(mi int, newblockid int64) {
+func relay(mi int, newblockid blockid) {
 	m := &g.miners[mi]
 	for _, p := range m.peer {
 		// Improve simulator efficiency by not relaying blocks
@@ -152,7 +154,7 @@ func relay(mi int, newblockid int64) {
 }
 
 // Start mining on top of the given existing block
-func startMining(mi int, blockid int64) {
+func startMining(mi int, blockid blockid) {
 	m := &g.miners[mi]
 	// We'll mine on top of blockid
 	m.current = blockid
@@ -290,7 +292,7 @@ func main() {
 			}
 			m.mined++
 			stopMining(mi)
-			ev.blockid = g.baseblockid + int64(len(g.blocks))
+			ev.blockid = g.baseblockid + blockid(len(g.blocks))
 			height++
 			g.blocks = append(g.blocks, block{
 				parent: m.current,
