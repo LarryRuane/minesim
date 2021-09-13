@@ -64,7 +64,7 @@ type (
 		mined    int     // how many total blocks we've mined (including reorg)
 		credit   int     // how many best-chain blocks we've mined
 		peer     []peer  // outbound peers (we forward blocks to these miners)
-		current  blockid // the blockid we're trying to mine onto, initially 1
+		tip      blockid // the blockid we're trying to mine onto, initially 1
 	}
 
 	// The only event is the arrival of a block, either mined or relayed.
@@ -128,9 +128,9 @@ func (e *eventlist) Pop() interface{} {
 
 func stopMining(mi int) {
 	m := &g.miners[mi]
-	g.tips[m.current]--
-	if g.tips[m.current] == 0 {
-		delete(g.tips, m.current)
+	g.tips[m.tip]--
+	if g.tips[m.tip] == 0 {
+		delete(g.tips, m.tip)
 	}
 }
 
@@ -142,7 +142,7 @@ func relay(mi int, newblockid blockid) {
 	for _, p := range m.peer {
 		// Improve simulator efficiency by not relaying blocks
 		// that are certain to be ignored.
-		if getheight(g.miners[p.miner].current) < getheight(newblockid) {
+		if getheight(g.miners[p.miner].tip) < getheight(newblockid) {
 			// TODO jitter this delay, or sometimes fail to forward?
 			heap.Push(&g.eventlist, event{
 				to:      p.miner,
@@ -157,8 +157,8 @@ func relay(mi int, newblockid blockid) {
 func startMining(mi int, blockid blockid) {
 	m := &g.miners[mi]
 	// We'll mine on top of blockid
-	m.current = blockid
-	g.tips[m.current]++
+	m.tip = blockid
+	g.tips[m.tip]++
 
 	// Schedule an event for when our "mining" will be done.
 	solvetime := -math.Log(1.0-rand.Float64()) *
@@ -268,7 +268,7 @@ func main() {
 			// Since all miners are building on the same tip, the blocks from
 			// the tip to the base can't be reorged away, so we can remove
 			// them, but give credit for these mined blocks as we do.
-			newbaseblockid := g.miners[0].current
+			newbaseblockid := g.miners[0].tip
 			b := getblock(newbaseblockid)
 			for b != &g.blocks[0] {
 				g.miners[b.miner].credit++
@@ -282,10 +282,10 @@ func main() {
 		g.currenttime = ev.when
 		mi := ev.to
 		m := &g.miners[mi]
-		height := getheight(m.current)
+		height := getheight(m.tip)
 		if ev.mining {
 			// We mined a block (unless this is a stale event).
-			if ev.blockid != m.current {
+			if ev.blockid != m.tip {
 				// This is a stale mining event, ignore it (we should
 				// still have an active mining event outstanding).
 				continue
@@ -295,11 +295,11 @@ func main() {
 			ev.blockid = g.baseblockid + blockid(len(g.blocks))
 			height++
 			g.blocks = append(g.blocks, block{
-				parent: m.current,
+				parent: m.tip,
 				height: height,
 				miner:  mi})
 			g.trace("%.3f %s mined-newid %d on %d height %d\n",
-				g.currenttime, m.name, ev.blockid, m.current, height)
+				g.currenttime, m.name, ev.blockid, m.tip, height)
 		} else {
 			// Block received from a peer (but could be a stale message).
 			if !validblock(ev.blockid) || getheight(ev.blockid) <= height {
@@ -309,7 +309,7 @@ func main() {
 			// This block is better, switch to it, first compute reorg depth.
 			g.trace("%.3f %s received-switch-to %d\n",
 				g.currenttime, m.name, ev.blockid)
-			c := getblock(m.current)  // current block we're mining on
+			c := getblock(m.tip)      // current block we're mining on
 			t := getblock(ev.blockid) // to block (switching to)
 			// Move back on the "to" (better) chain until even with current.
 			for t.height > c.height {
