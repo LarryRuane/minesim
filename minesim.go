@@ -62,7 +62,7 @@ type (
 		hashrate float64 // how much hashing power this miner has
 		mined    int     // how many total blocks we've mined (including reorg)
 		credit   int     // how many best-chain blocks we've mined
-		peer     []peer  // outbound peers (we forward blocks to these miners)
+		peers    []peer  // outbound peers (we forward blocks to these miners)
 		tip      blockid // the blockid we're trying to mine onto, initially 1
 	}
 
@@ -129,7 +129,7 @@ func (e *eventlist) Pop() interface{} {
 // of our peers), but that's okay, it will be ignored.
 func relay(mi int, newblockid blockid) {
 	m := &g.miners[mi]
-	for _, p := range m.peer {
+	for _, p := range m.peers {
 		// Improve simulator efficiency by not relaying blocks
 		// that are certain to be ignored.
 		if getheight(g.miners[p.miner].tip) < getheight(newblockid) {
@@ -290,7 +290,7 @@ func main() {
 				fmt.Fprintln(os.Stderr, "bad delay:", v[1], err)
 				os.Exit(1)
 			}
-			m.peer = append(m.peer, peer{minerIndex[v[0]], delay})
+			m.peers = append(m.peers, peer{minerIndex[v[0]], delay})
 			v = v[2:]
 		}
 		g.miners[m.index] = m
