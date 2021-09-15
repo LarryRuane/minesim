@@ -1,4 +1,4 @@
-// Copyright (c) 2020 Larry Ruane
+// Copyright (c) 2020-2021 Larry Ruane
 // Distributed under the MIT software license, see
 // https://www.opensource.org/licenses/mit-license.php.
 //
@@ -22,11 +22,11 @@ import (
 
 var g struct {
 	// Arguments:
-	network       string  // pathname of network topology file
-	blockinterval float64 // average time between blocks
-	repetitions   int     // number of simulation steps
-	traceenable   bool    // show details of each sim step
-	seed          int64   // random number seed, -1 means use wall-clock
+	network       string // pathname of network topology file
+	blockinterval int    // average time between blocks
+	stopheight    int64  // run until this height is reached
+	traceenable   bool   // show details of each sim step
+	seed          int64  // random number seed, -1 means use wall-clock
 
 	// Main simulator state:
 	currenttime float64   // simulated time since start
@@ -35,6 +35,7 @@ var g struct {
 	eventlist   eventlist // priority queue, lowest timestamp first
 
 	// Implementation detail simulator state:
+	maxHeight   height     // greatest height any miner has reached
 	baseblockid blockid    // blocks[0] corresponds to this block id
 	r           *rand.Rand // for block interval calculation
 	maxreorg    int        // greatest depth reorg
@@ -68,8 +69,8 @@ type (
 
 	// The only event is the arrival of a block, either mined or relayed.
 	event struct {
-		to     int     // which miner gets the block
-		mining bool    // block arrival from mining (true) or peer (false)
+		to     int     // which miner (index) gets the block
+		mining bool    // block arrival from our mining (true) or peer (false)
 		when   float64 // time of block arrival
 		bid    blockid // block being mined on (parent) or block from peer
 	}
@@ -90,8 +91,8 @@ func init() {
 	}
 
 	flag.StringVar(&g.network, "f", "./network", "network topology file")
-	flag.Float64Var(&g.blockinterval, "i", 300, "average block interval")
-	flag.IntVar(&g.repetitions, "r", 1_000_000, "number of simulation steps")
+	flag.IntVar(&g.blockinterval, "i", 600, "average block interval")
+	flag.Int64Var(&g.stopheight, "h", 1_000_000, "stopping height")
 	flag.BoolVar(&g.traceenable, "t", false, "print execution trace to stdout")
 	flag.Int64Var(&g.seed, "s", 0, "random number seed, -1 to use wall-clock")
 }
@@ -133,7 +134,6 @@ func relay(mi int, newblockid blockid) {
 		// Improve simulator efficiency by not relaying blocks
 		// that are certain to be ignored.
 		if getheight(g.miners[p.miner].tip) < getheight(newblockid) {
-			// TODO jitter this delay, or sometimes fail to forward?
 			heap.Push(&g.eventlist, event{
 				to:     p.miner,
 				mining: false,
@@ -151,7 +151,7 @@ func startMining(mi int, bid blockid) {
 
 	// Schedule an event for when our "mining" will be done.
 	solvetime := -math.Log(1.0-rand.Float64()) *
-		g.blockinterval * g.totalhash / m.hashrate
+		float64(g.blockinterval) * g.totalhash / m.hashrate
 
 	heap.Push(&g.eventlist, event{
 		to:     mi,
@@ -302,9 +302,9 @@ func main() {
 		startMining(mi, g.baseblockid)
 	}
 
-	// Start of main loop.
-	for rep := 0; rep < g.repetitions; rep++ {
-		if len(g.blocks) > 1000 {
+	// Main event loop
+	for g.maxHeight < height(g.stopheight) {
+		if g.maxHeight%10000 == 0 {
 			cleanBlocks()
 		}
 		ev := heap.Pop(&g.eventlist).(event)
@@ -322,6 +322,9 @@ func main() {
 			m.mined++
 			ev.bid = g.baseblockid + blockid(len(g.blocks))
 			height++
+			if g.maxHeight < height {
+				g.maxHeight = height
+			}
 			g.blocks = append(g.blocks, block{
 				parent: m.tip,
 				height: height,
@@ -371,9 +374,10 @@ func main() {
 		totalstale += m.mined - m.credit
 	}
 	fmt.Printf("seed-arg %d\n", g.seed)
-	if g.blockinterval > 0 {
-		fmt.Printf("block-interval-arg %.2f\n", g.blockinterval)
-	}
+	fmt.Printf("block-interval-arg %d\n", g.blockinterval)
+	fmt.Printf("stopheight-arg %d\n", g.stopheight)
+	fmt.Printf("total-hashrate-arg %.2f\n",
+		g.totalhash)
 	fmt.Printf("mined-blocks %d\n",
 		minedblocks)
 	fmt.Printf("height %d %.2f%%\n", totalblocks,
@@ -382,13 +386,9 @@ func main() {
 		g.currenttime)
 	fmt.Printf("ave-block-time %.2f\n",
 		float64(g.currenttime)/float64(totalblocks))
-	fmt.Printf("total-hashrate-arg %.2f\n",
-		g.totalhash)
-	fmt.Printf("total-stale %d\n",
-		totalstale)
+	fmt.Printf("total-stale %d %.2f%%\n",
+		totalstale, float64(totalstale*100)/float64(minedblocks))
 	fmt.Printf("max-reorg-depth %d\n", g.maxreorg)
-	fmt.Printf("baseblockid %d\n", g.baseblockid)
-	fmt.Printf("repetitions-arg %d\n", g.repetitions)
 	for _, m := range g.miners {
 		fmt.Printf("miner %s hashrate-arg %.2f %.2f%% ", m.name,
 			m.hashrate, m.hashrate*100/g.totalhash)
