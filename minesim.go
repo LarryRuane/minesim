@@ -163,7 +163,7 @@ func startMining(mi int, bid blockid) {
 		m.mined, m.credit, solvetime)
 }
 
-// Remove unneded blocks, give credits to miners.
+// Remove un-needed blocks, give credits to miners.
 func cleanBlocks() {
 	// Find the minimum height that any miner is at.
 	var minheight height
@@ -373,28 +373,23 @@ func main() {
 		minedblocks += m.mined
 		totalstale += m.mined - m.credit
 	}
-	fmt.Printf("seed-arg %d\n", g.seed)
-	fmt.Printf("block-interval-arg %d\n", g.blockinterval)
-	fmt.Printf("stopheight-arg %d\n", g.stopheight)
-	fmt.Printf("total-hashrate-arg %.2f\n",
-		g.totalhash)
-	fmt.Printf("mined-blocks %d\n",
-		minedblocks)
-	fmt.Printf("height %d %.2f%%\n", totalblocks,
-		float64(totalblocks)*100/float64(minedblocks))
-	fmt.Printf("total-simtime %.2f\n",
-		g.currenttime)
-	fmt.Printf("ave-block-time %.2f\n",
+	fmt.Printf("%-20s %-d\n", "seed-arg", g.seed)
+	fmt.Printf("%-20s %-d\n", "block-interval-arg", g.blockinterval)
+	fmt.Printf("%-20s %-d\n", "stopheight-arg", g.stopheight)
+	fmt.Printf("%-20s %-.2f\n", "total-hashrate-arg", g.totalhash)
+	fmt.Printf("%-20s %-d\n", "mined-blocks", minedblocks)
+	fmt.Printf("%-20s %-.2f\n", "total-simtime", g.currenttime)
+	fmt.Printf("%-20s %-.2f\n", "ave-block-time",
 		float64(g.currenttime)/float64(totalblocks))
-	fmt.Printf("total-stale %d %.2f%%\n",
+	fmt.Printf("%-20s %-d \t%-.2f%%\n", "stale-rate",
 		totalstale, float64(totalstale*100)/float64(minedblocks))
-	fmt.Printf("max-reorg-depth %d\n", g.maxreorg)
+	fmt.Printf("%-20s %-d\n", "max-reorg-depth", g.maxreorg)
 	for _, m := range g.miners {
-		fmt.Printf("miner %s hashrate-arg %.2f %.2f%% ", m.name,
+		fmt.Printf("miner %-13s  hashrate-arg %-8.2f %-5.2f%% ", m.name,
 			m.hashrate, m.hashrate*100/g.totalhash)
-		fmt.Printf("blocks %.2f%% ",
+		fmt.Printf("blocks %-5.2f%% ",
 			float64(m.credit*100)/float64(totalblocks))
-		fmt.Printf("stale %.2f%%",
+		fmt.Printf("stale %-5.2f%%",
 			float64((m.mined-m.credit)*100)/float64(m.mined))
 		fmt.Println("")
 	}
