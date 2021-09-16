@@ -69,6 +69,12 @@ Peer specifications are one-way: If miner A lists miner B as a peer,
 A sends to B but that doesn't allow B to send to A;
 that must be specified explicitly.
 
+Each peer must have at least one *inbound* connection (another peer
+listing a connection to it), otherwise it won't receive any blocks and
+will mine on it's own chain for the entire run.
+This behaviour will manifest itself by returning `NaN` for the "blocks"
+and "stale" fields in the results table.
+
 ## Building, running, and startup
 
 To build: `go build minesim.go`
@@ -154,22 +160,22 @@ with the default network configuration:
 
 ```
 $ go run minesim.go
-seed-arg 0
-block-interval-arg 600
-stopheight-arg 1000000
-total-hashrate-arg 1760.00
-mined-blocks 1011319
-height 999999 98.88%
-total-simtime 607747252.45
-ave-block-time 607.75
-total-stale 11320 1.12%
-max-reorg-depth 3
-miner china-asic hashrate-arg 500.00 28.41% blocks 28.19% stale 1.81%
-miner china-gpu hashrate-arg 80.00 4.55% blocks 4.55% stale 1.89%
-miner portable hashrate-arg 60.00 3.41% blocks 3.38% stale 1.90%
-miner china-gateway hashrate-arg 20.00 1.14% blocks 1.13% stale 1.78%
-miner iceland-gw hashrate-arg 500.00 28.41% blocks 28.46% stale 0.69%
-miner iceland2 hashrate-arg 600.00 34.09% blocks 34.28% stale 0.70%
+
+seed-arg             0
+block-interval-arg   600
+stopheight-arg       1000000
+total-hashrate-arg   1760.00
+mined-blocks         1011319
+total-simtime        607747252.45
+ave-block-time       607.75
+stale-rate           11320      1.12%
+max-reorg-depth      3
+miner china-asic     hashrate-arg 500.00   28.41% blocks 28.19% stale 1.81 %
+miner china-gpu      hashrate-arg 80.00    4.55 % blocks 4.55 % stale 1.89 %
+miner portable       hashrate-arg 60.00    3.41 % blocks 3.38 % stale 1.90 %
+miner china-gateway  hashrate-arg 20.00    1.14 % blocks 1.13 % stale 1.78 %
+miner iceland-gw     hashrate-arg 500.00   28.41% blocks 28.46% stale 0.69 %
+miner iceland2       hashrate-arg 600.00   34.09% blocks 34.28% stale 0.70 %
 ```
 
 (The `*-arg` values are arguments to the simulation, not computed
