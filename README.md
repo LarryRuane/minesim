@@ -160,22 +160,22 @@ with the default network configuration:
 
 ```
 $ go run minesim.go
-
-seed-arg             0
-block-interval-arg   600
-stopheight-arg       1000000
-total-hashrate-arg   1760.00
-mined-blocks         1011319
-total-simtime        607747252.45
-ave-block-time       607.75
-stale-rate           11320      1.12%
-max-reorg-depth      3
-miner china-asic     hashrate-arg 500.00   28.41% blocks 28.19% stale 1.81 %
-miner china-gpu      hashrate-arg 80.00    4.55 % blocks 4.55 % stale 1.89 %
-miner portable       hashrate-arg 60.00    3.41 % blocks 3.38 % stale 1.90 %
-miner china-gateway  hashrate-arg 20.00    1.14 % blocks 1.13 % stale 1.78 %
-miner iceland-gw     hashrate-arg 500.00   28.41% blocks 28.46% stale 0.69 %
-miner iceland2       hashrate-arg 600.00   34.09% blocks 34.28% stale 0.70 %
+seed-arg                          0
+block-interval-arg              600
+stopheight-arg              1000000
+total-hashrate-arg             1760
+mined-blocks                1011317
+total-simtime         607746829.335
+ave-block-time              607.747
+stale-blocks                  11318
+stale-rate                     1.12%
+max-reorg-depth                   3
+miner china-asic     hashrate-arg    500  28.41% blocks  28.19% stale-rate   1.81%
+miner china-gpu      hashrate-arg     80   4.55% blocks   4.55% stale-rate   1.89%
+miner portable       hashrate-arg     60   3.41% blocks   3.38% stale-rate   1.90%
+miner china-gateway  hashrate-arg     20   1.14% blocks   1.13% stale-rate   1.78%
+miner iceland-gw     hashrate-arg    500  28.41% blocks  28.46% stale-rate   0.69%
+miner iceland2       hashrate-arg    600  34.09% blocks  34.28% stale-rate   0.70%
 ```
 
 (The `*-arg` values are arguments to the simulation, not computed
@@ -209,7 +209,6 @@ details. Here's the beginning of the output using the default arguments:
 
 ```
 $ go run minesim.go -t
-...
 0.000 china-asic start-on 1000 height 0 mined 0 credit 0 solve 1959.96
 0.000 china-gpu start-on 1000 height 0 mined 0 credit 0 solve 37249.50
 0.000 portable start-on 1000 height 0 mined 0 credit 0 solve 19224.70

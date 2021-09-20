@@ -40,7 +40,8 @@ var g struct {
 	r           *rand.Rand // for block interval calculation
 	maxreorg    int        // greatest depth reorg
 	trace       traceFunc  // show details of each sim step
-	totalhash   float64    // sum of miners' hashrates
+	totalhash   int        // sum of miners' hashrates
+	mined       height     // number of blocks mined up to baseblock
 }
 
 type (
@@ -50,6 +51,7 @@ type (
 		parent blockid // first block is the only block with parent = zero
 		height height  // more than one block can have the same height
 		miner  int     // which miner found this block
+		time   float64 // time this block was mined
 	}
 
 	// The set of miners and their peers is static (at least for now).
@@ -60,9 +62,9 @@ type (
 	miner struct {
 		name     string
 		index    int     // in miner[]
-		hashrate float64 // how much hashing power this miner has
-		mined    int     // how many total blocks we've mined (including reorg)
-		credit   int     // how many best-chain blocks we've mined
+		hashrate int     // how much hashing power this miner has
+		mined    height  // how many total blocks we've mined (including reorg)
+		credit   height  // how many best-chain blocks we've mined
 		peers    []peer  // outbound peers (we forward blocks to these miners)
 		tip      blockid // the blockid we're trying to mine onto, initially 1
 	}
@@ -82,7 +84,9 @@ func init() {
 	g.blocks = append(g.blocks, block{
 		parent: 0,
 		height: 0,
-		miner:  -1})
+		miner:  -1,
+		time:   0,
+	})
 	g.baseblockid = 1000 // arbitrary but helps distinguish ids from heights
 	g.eventlist = make([]event, 0)
 	g.trace = func(format string, a ...interface{}) (n int, err error) {
@@ -151,7 +155,7 @@ func startMining(mi int, bid blockid) {
 
 	// Schedule an event for when our "mining" will be done.
 	solvetime := -math.Log(1.0-rand.Float64()) *
-		float64(g.blockinterval) * g.totalhash / m.hashrate
+		float64(g.blockinterval*g.totalhash) / float64(m.hashrate)
 
 	heap.Push(&g.eventlist, event{
 		to:     mi,
@@ -208,6 +212,14 @@ func cleanBlocks() {
 		g.miners[b.miner].credit++
 		b = getblock(b.parent)
 	}
+	// Increment the number of blocks mined per miner.
+	for i := blockid(0); i < newbaseblockid-g.baseblockid; i++ {
+		b := g.blocks[i]
+		// don't include the genesis block
+		if b.height > 0 {
+			g.mined++
+		}
+	}
 
 	// Remove older blocks that are no longer relevant.
 	g.blocks = g.blocks[newbaseblockid-g.baseblockid:]
@@ -262,7 +274,7 @@ func main() {
 	g.miners = make([]miner, i)
 	for k, v := range minerMap {
 		// v is a slice of whitespace-separated tokens (on a line)
-		hr, err := strconv.ParseFloat(v[0], 64)
+		hr, err := strconv.Atoi(v[0])
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "bad hashrate:", v[0], err)
 			os.Exit(1)
@@ -328,7 +340,9 @@ func main() {
 			g.blocks = append(g.blocks, block{
 				parent: m.tip,
 				height: height,
-				miner:  mi})
+				miner:  mi,
+				time:   g.currenttime,
+			})
 			g.trace("%.3f %s mined-newid %d on %d height %d\n",
 				g.currenttime, m.name, ev.bid, m.tip, height)
 		} else {
@@ -365,31 +379,26 @@ func main() {
 		startMining(mi, ev.bid)
 	}
 	cleanBlocks()
-	var totalblocks int
-	var minedblocks int
-	var totalstale int
+	var bestchainblocks height = g.blocks[0].height
+	var staleblocks height = g.mined - bestchainblocks
+	fmt.Printf("%-20s %14d\n", "seed-arg", g.seed)
+	fmt.Printf("%-20s %14d\n", "block-interval-arg", g.blockinterval)
+	fmt.Printf("%-20s %14d\n", "stopheight-arg", g.stopheight)
+	fmt.Printf("%-20s %14d\n", "total-hashrate-arg", g.totalhash)
+	fmt.Printf("%-20s %14d\n", "mined-blocks", g.mined)
+	fmt.Printf("%-20s %14.3f\n", "total-simtime", g.blocks[0].time)
+	fmt.Printf("%-20s %14.3f\n", "ave-block-time",
+		float64(g.blocks[0].time)/float64(bestchainblocks))
+	fmt.Printf("%-20s %14d\n", "stale-blocks", staleblocks)
+	fmt.Printf("%-20s %14.2f%%\n", "stale-rate",
+		float64(staleblocks*100)/float64(g.mined))
+	fmt.Printf("%-20s %14d\n", "max-reorg-depth", g.maxreorg)
 	for _, m := range g.miners {
-		totalblocks += m.credit
-		minedblocks += m.mined
-		totalstale += m.mined - m.credit
-	}
-	fmt.Printf("%-20s %-d\n", "seed-arg", g.seed)
-	fmt.Printf("%-20s %-d\n", "block-interval-arg", g.blockinterval)
-	fmt.Printf("%-20s %-d\n", "stopheight-arg", g.stopheight)
-	fmt.Printf("%-20s %-.2f\n", "total-hashrate-arg", g.totalhash)
-	fmt.Printf("%-20s %-d\n", "mined-blocks", minedblocks)
-	fmt.Printf("%-20s %-.2f\n", "total-simtime", g.currenttime)
-	fmt.Printf("%-20s %-.2f\n", "ave-block-time",
-		float64(g.currenttime)/float64(totalblocks))
-	fmt.Printf("%-20s %-d \t%-.2f%%\n", "stale-rate",
-		totalstale, float64(totalstale*100)/float64(minedblocks))
-	fmt.Printf("%-20s %-d\n", "max-reorg-depth", g.maxreorg)
-	for _, m := range g.miners {
-		fmt.Printf("miner %-13s  hashrate-arg %-8.2f %-5.2f%% ", m.name,
-			m.hashrate, m.hashrate*100/g.totalhash)
-		fmt.Printf("blocks %-5.2f%% ",
-			float64(m.credit*100)/float64(totalblocks))
-		fmt.Printf("stale %-5.2f%%",
+		fmt.Printf("miner %-13s  hashrate-arg %6d %6.2f%% ", m.name,
+			m.hashrate, float64(m.hashrate*100)/float64(g.totalhash))
+		fmt.Printf("blocks %6.2f%% ",
+			float64(m.credit*100)/float64(bestchainblocks))
+		fmt.Printf("stale-rate %6.2f%%",
 			float64((m.mined-m.credit)*100)/float64(m.mined))
 		fmt.Println("")
 	}
