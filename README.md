@@ -8,6 +8,10 @@ This program simulates a POW mining network, such as Bitcoin or Zcash
 This software is released under the terms of the MIT license,
 see https://opensource.org/licenses/MIT.
 
+## Acknowledgment
+
+This work has been supported by a Brink grant (https://brink.dev/).
+
 ## Introduction
 
 Like any simulator, this one abstracts away a huge amount of stuff (if it

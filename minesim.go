@@ -1,7 +1,9 @@
 // Copyright (c) 2020-2021 Larry Ruane
 // Distributed under the MIT software license, see
 // https://www.opensource.org/licenses/mit-license.php.
-//
+
+// This work has been supported by a Brink grant (https://brink.dev/)
+
 // This program simulates a network of block miners in a proof of work system.
 // You specify a network topology, and a hash rate for each miner.
 // The time units are arbitrary, but seconds works well.
