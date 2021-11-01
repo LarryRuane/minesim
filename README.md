@@ -266,6 +266,17 @@ algorithm is used in the simulator. The other program, `blockint-count.py`,
 more closely simulates mining by repeatedly attempting to "solve" a block,
 not by hashing but by generating random numbers.
 
+## Future improvements
+
+- Variable (random) message delays
+- Unreliable network (random dropped messages)
+- Automatic node creation and peer connection, not just a static network
+- Nodes dynamically joining and leaving the network
+- Dynamic network connections (network partitions and healing)
+- Difficulty adjustment
+- Forks (hard and soft), chain wipeout
+- Nonstandard behaviors such as selfish mining
+
 ## Exercises, discussion questions
 
 - Run minsim with the default configuration (`go run minesim`)
