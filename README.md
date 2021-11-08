@@ -14,6 +14,8 @@ This work has been supported by a Brink grant (https://brink.dev/).
 
 ## Introduction
 
+[TABConf2021 presentation slides](https://docs.google.com/presentation/d/e/2PACX-1vTvKsjLbYmbURJUkPiXq-u4rrSGcby6cdDGDxPGDILixRptlHcrqBWbHtSadtxjr-ki2sCgxkrLnf_N/pub)
+
 Like any simulator, this one abstracts away a huge amount of stuff (if it
 didn't, it wouldn't be a simulator, it would be the thing itself). It's
 a single executable written in Go. It can simulate the generation of
