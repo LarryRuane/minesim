@@ -42,7 +42,7 @@ It does not simulate:
 
 - actual POW computation (hashing)
 - transactions
-- real block forwarding (https://bitcoin.org/en/p2p-network-guide#block-broadcasting)
+- real block forwarding (https://developer.bitcoin.org/devguide/p2p_network.html#block-broadcasting)
 - Byzantine (faulty or malicious) behaviors
 - hard or soft forks (changing the validity rules)
 - initial block download (IBD, initial sync)
